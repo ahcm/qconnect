@@ -1,0 +1,20 @@
+[package]
+name = "qconnect"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+async-trait = "0.1"
+clap = { version = "4.5", features = ["derive", "env"] }
+dirs = "5"
+env_logger = "0.11"
+hex = "0.4"
+log = "0.4"
+qconnect-app = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qconnect-app" }
+qconnect-core = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qconnect-core" }
+qconnect-transport-ws = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qconnect-transport-ws" }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
+uuid = { version = "1", features = ["v4"] }
