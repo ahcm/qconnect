@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
+use qbz_qobuz::QobuzClient;
 use qconnect_app::{
     QConnectQueueState, QConnectRendererState, QconnectApp, QconnectAppEvent, QconnectEventSink,
     QueueCommandType, RendererCommand, RendererReport, RendererReportType,
@@ -13,6 +14,7 @@ use qconnect_app::{
 use qconnect_core::QueueItem;
 use qconnect_transport_ws::{NativeWsTransport, TransportEvent, WsTransportConfig};
 use serde_json::{Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, broadcast};
 use uuid::Uuid;
 
@@ -26,6 +28,88 @@ const AUDIO_QUALITY_HIRES_LEVEL2: i32 = 4;
 const VOLUME_REMOTE_CONTROL_ALLOWED: i32 = 2;
 
 type App = QconnectApp<NativeWsTransport, CliEventSink>;
+
+pub async fn browser_login(
+    bind: &str,
+    timeout: Duration,
+    print_token: bool,
+    no_browser: bool,
+) -> Result<()>
+{
+    println!("Initializing Qobuz OAuth client...");
+    let client = QobuzClient::new().context("create Qobuz API client")?;
+    client
+        .init()
+        .await
+        .context("extract Qobuz web app credentials")?;
+    let app_id = client.app_id().await.context("read Qobuz app id")?;
+
+    let listener = tokio::net::TcpListener::bind((bind, 0))
+        .await
+        .with_context(|| format!("bind OAuth callback listener on {bind}:0"))?;
+    let port = listener
+        .local_addr()
+        .context("read OAuth callback listener address")?
+        .port();
+    let redirect_host = redirect_host_for_bind(bind);
+    let redirect_url = format!("http://{redirect_host}:{port}");
+    let oauth_url = format!(
+        "https://www.qobuz.com/signin/oauth?ext_app_id={}&redirect_url={}",
+        app_id,
+        urlencoding::encode(&redirect_url),
+    );
+
+    println!("Open this URL to authorize qconnect:");
+    println!("{oauth_url}");
+    println!("Callback listening on {redirect_url}");
+
+    if !no_browser
+    {
+        match open::that(&oauth_url)
+        {
+            Ok(()) => println!("Opened the system browser."),
+            Err(err) => println!("Could not open browser automatically: {err}"),
+        }
+    }
+
+    let code = tokio::time::timeout(timeout, receive_oauth_code(listener))
+        .await
+        .with_context(|| format!("OAuth login timed out after {}s", timeout.as_secs()))??;
+
+    println!("Authorization code received. Exchanging for Qobuz session...");
+    let session = client
+        .login_with_oauth_code(&code)
+        .await
+        .context("exchange OAuth code for Qobuz session")?;
+
+    save_app_id(&app_id)?;
+    save_user_auth_token(&session.user_auth_token)?;
+
+    println!("Logged in as {} (user_id: {})", session.display_name, session.user_id);
+    println!("Subscription: {}", session.subscription_label);
+    if let Some(valid_until) = session.subscription_valid_until.as_deref()
+    {
+        println!("Subscription valid until: {valid_until}");
+    }
+    println!("Saved token to {}", user_auth_token_path().display());
+
+    if print_token
+    {
+        println!("QOBUZ_USER_AUTH_TOKEN={}", session.user_auth_token);
+    }
+
+    Ok(())
+}
+
+pub fn load_saved_app_id() -> Result<Option<String>>
+{
+    read_optional_secret_file(&app_id_path())
+}
+
+pub fn load_saved_user_auth_token() -> Result<Option<String>>
+{
+    read_optional_secret_file(&user_auth_token_path())
+}
 
 #[derive(Debug, Clone)]
 pub struct ClientOptions
@@ -445,6 +529,96 @@ async fn resolve_transport_config(options: &ClientOptions) -> Result<WsTransport
     })
 }
 
+async fn receive_oauth_code(listener: tokio::net::TcpListener) -> Result<String>
+{
+    loop
+    {
+        let (mut stream, _) = listener
+            .accept()
+            .await
+            .context("accept OAuth callback connection")?;
+        let mut buffer = vec![0_u8; 8192];
+        let read = stream
+            .read(&mut buffer)
+            .await
+            .context("read OAuth callback request")?;
+        let request = String::from_utf8_lossy(&buffer[..read]);
+        let code = parse_oauth_code_from_request(&request);
+        let body = if code.is_some()
+        {
+            oauth_html("Login successful", "You can close this tab and return to qconnect.")
+        }
+        else
+        {
+            oauth_html(
+                "Login failed",
+                "No authorization code was received. Return to qconnect and try again.",
+            )
+        };
+        let response = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+            body.len(),
+            body
+        );
+        let _ = stream.write_all(response.as_bytes()).await;
+        let _ = stream.shutdown().await;
+
+        if let Some(code) = code
+        {
+            return Ok(code);
+        }
+    }
+}
+
+fn parse_oauth_code_from_request(request: &str) -> Option<String>
+{
+    let request_target = request.lines().next()?.split_whitespace().nth(1)?;
+    let query = request_target.split_once('?')?.1;
+    query.split('&').find_map(|pair| {
+        let (key, value) = pair.split_once('=')?;
+        if key == "code_autorisation" || key == "code"
+        {
+            urlencoding::decode(value)
+                .ok()
+                .map(|decoded| decoded.into_owned())
+        }
+        else
+        {
+            None
+        }
+    })
+}
+
+fn oauth_html(title: &str, message: &str) -> String
+{
+    format!(
+        "<!doctype html><html><head><meta charset=\"utf-8\"><title>{title}</title></head>\
+         <body style=\"font-family:system-ui,sans-serif;text-align:center;padding:64px\">\
+         <h2>{title}</h2><p>{message}</p></body></html>"
+    )
+}
+
+fn redirect_host_for_bind(bind: &str) -> String
+{
+    match bind
+    {
+        "127.0.0.1" => "127.0.0.1".to_string(),
+        "::1" => "[::1]".to_string(),
+        "localhost" => "localhost".to_string(),
+        "0.0.0.0" | "::" => detect_lan_ip().unwrap_or_else(|| "localhost".to_string()),
+        other => other.to_string(),
+    }
+}
+
+fn detect_lan_ip() -> Option<String>
+{
+    let socket = std::net::UdpSocket::bind("0.0.0.0:0").ok()?;
+    socket.connect("8.8.8.8:80").ok()?;
+    let addr = socket.local_addr().ok()?;
+    let ip = addr.ip().to_string();
+    (ip != "0.0.0.0" && ip != "127.0.0.1").then_some(ip)
+}
+
 struct QwsCredentials
 {
     endpoint: String,
@@ -603,6 +777,63 @@ fn device_uuid_path() -> PathBuf
         .unwrap_or_else(|| PathBuf::from("."))
         .join("qconnect")
         .join("device_uuid")
+}
+
+fn app_id_path() -> PathBuf
+{
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("qconnect")
+        .join("app_id")
+}
+
+fn user_auth_token_path() -> PathBuf
+{
+    dirs::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("qconnect")
+        .join("user_auth_token")
+}
+
+fn read_optional_secret_file(path: &PathBuf) -> Result<Option<String>>
+{
+    match std::fs::read_to_string(path)
+    {
+        Ok(value) =>
+        {
+            let trimmed = value.trim().to_string();
+            Ok((!trimmed.is_empty()).then_some(trimmed))
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
+    }
+}
+
+fn save_app_id(app_id: &str) -> Result<()>
+{
+    write_secret_file(&app_id_path(), app_id)
+}
+
+fn save_user_auth_token(token: &str) -> Result<()>
+{
+    write_secret_file(&user_auth_token_path(), token)
+}
+
+fn write_secret_file(path: &PathBuf, value: &str) -> Result<()>
+{
+    if let Some(parent) = path.parent()
+    {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("create config dir {}", parent.display()))?;
+    }
+    std::fs::write(path, value).with_context(|| format!("write {}", path.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+            .with_context(|| format!("restrict permissions {}", path.display()))?;
+    }
+    Ok(())
 }
 
 #[derive(Clone)]

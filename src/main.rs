@@ -81,6 +81,22 @@ struct Cli
 #[derive(Debug, Subcommand)]
 enum Command
 {
+    /// Obtain and save a Qobuz user auth token via browser OAuth.
+    Login
+    {
+        /// Bind address for the temporary OAuth callback listener.
+        #[arg(long, default_value = "127.0.0.1")]
+        bind: String,
+        /// Seconds to wait for the browser callback.
+        #[arg(long, default_value_t = 120)]
+        timeout_secs: u64,
+        /// Print the raw token after login.
+        #[arg(long)]
+        print_token: bool,
+        /// Print the browser URL without attempting to open it.
+        #[arg(long)]
+        no_browser: bool,
+    },
     /// Join Qobuz Connect and expose this process as a headless renderer.
     Serve
     {
@@ -203,6 +219,25 @@ async fn main() -> Result<()>
 
     let cli = Cli::parse();
     let command = cli.command;
+
+    if let Command::Login {
+        bind,
+        timeout_secs,
+        print_token,
+        no_browser,
+    } = &command
+    {
+        qconnect::browser_login(
+            bind,
+            Duration::from_secs(*timeout_secs),
+            *print_token,
+            *no_browser,
+        )
+        .await
+        .context("Qobuz browser login")?;
+        return Ok(());
+    }
+
     let enable_renderer = matches!(command, Command::Serve { .. });
     let wait_after_connect = wait_secs_for(&command);
 
@@ -222,11 +257,13 @@ async fn main() -> Result<()>
             cli.app_id,
             std::env::var("QBZ_QOBUZ_APP_ID").ok(),
             std::env::var("QOBUZ_APP_ID").ok(),
+            qconnect::load_saved_app_id().ok().flatten(),
         ]),
         user_auth_token: first_non_empty([
             cli.user_auth_token,
             std::env::var("QBZ_QOBUZ_USER_AUTH_TOKEN").ok(),
             std::env::var("QOBUZ_USER_AUTH_TOKEN").ok(),
+            qconnect::load_saved_user_auth_token().ok().flatten(),
         ]),
         device_name: cli.device_name,
         device_uuid: cli.device_uuid,
@@ -247,6 +284,7 @@ async fn main() -> Result<()>
 
     match command
     {
+        Command::Login { .. } => unreachable!("login is handled before Connect startup"),
         Command::Serve {
             report_interval_secs,
         } =>
@@ -510,6 +548,7 @@ fn wait_secs_for(command: &Command) -> u64
 {
     match command
     {
+        Command::Login { .. } => 0,
         Command::Serve { .. } => 0,
         Command::Status { wait_secs }
         | Command::Queue { wait_secs }
