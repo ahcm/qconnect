@@ -5,7 +5,7 @@ Standalone Qobuz Connect CLI client built on the `qconnect-*` Rust crates from
 
 ## Credentials
 
-The easiest setup is browser OAuth:
+The easiest setup on a desktop machine is browser OAuth:
 
 ```sh
 qconnect login
@@ -15,6 +15,18 @@ This opens Qobuz in your browser, captures the localhost callback, and saves the
 discovered app id plus `QOBUZ_USER_AUTH_TOKEN` under your qconnect config
 directory for later commands. Use `qconnect login --print-token` if you need the
 raw token for another environment.
+
+On a headless machine, paste credentials directly:
+
+```sh
+qconnect login --manual
+```
+
+or use noninteractive arguments:
+
+```sh
+qconnect login --app-id '...' --user-auth-token '...'
+```
 
 The CLI can also connect with explicit environment variables:
 

@@ -101,6 +101,27 @@ pub async fn browser_login(
     Ok(())
 }
 
+pub fn manual_login(app_id: Option<String>, user_auth_token: Option<String>) -> Result<()>
+{
+    let app_id = match app_id
+    {
+        Some(value) => value,
+        None => prompt_required("QOBUZ_APP_ID")?,
+    };
+    let user_auth_token = match user_auth_token
+    {
+        Some(value) => value,
+        None => prompt_required("QOBUZ_USER_AUTH_TOKEN")?,
+    };
+
+    save_app_id(&app_id)?;
+    save_user_auth_token(&user_auth_token)?;
+
+    println!("Saved app id to {}", app_id_path().display());
+    println!("Saved token to {}", user_auth_token_path().display());
+    Ok(())
+}
+
 pub fn load_saved_app_id() -> Result<Option<String>>
 {
     read_optional_secret_file(&app_id_path())
@@ -807,6 +828,21 @@ fn read_optional_secret_file(path: &PathBuf) -> Result<Option<String>>
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(err).with_context(|| format!("read {}", path.display())),
     }
+}
+
+fn prompt_required(name: &str) -> Result<String>
+{
+    println!("Paste {name}:");
+    let mut value = String::new();
+    std::io::stdin()
+        .read_line(&mut value)
+        .with_context(|| format!("read {name} from stdin"))?;
+    let trimmed = value.trim().to_string();
+    if trimmed.is_empty()
+    {
+        bail!("{name} cannot be empty");
+    }
+    Ok(trimmed)
 }
 
 fn save_app_id(app_id: &str) -> Result<()>

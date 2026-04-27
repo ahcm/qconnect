@@ -81,9 +81,18 @@ struct Cli
 #[derive(Debug, Subcommand)]
 enum Command
 {
-    /// Obtain and save a Qobuz user auth token via browser OAuth.
+    /// Obtain or save Qobuz credentials.
     Login
     {
+        /// Save pasted credentials instead of running browser OAuth.
+        #[arg(long)]
+        manual: bool,
+        /// Qobuz API app id to save for this client.
+        #[arg(long)]
+        app_id: Option<String>,
+        /// Qobuz user auth token to save for this client.
+        #[arg(long)]
+        user_auth_token: Option<String>,
         /// Bind address for the temporary OAuth callback listener.
         #[arg(long, default_value = "127.0.0.1")]
         bind: String,
@@ -221,12 +230,35 @@ async fn main() -> Result<()>
     let command = cli.command;
 
     if let Command::Login {
+        manual,
+        app_id,
+        user_auth_token,
         bind,
         timeout_secs,
         print_token,
         no_browser,
     } = &command
     {
+        let pasted_app_id = first_non_empty([
+            app_id.clone(),
+            cli.app_id.clone(),
+            std::env::var("QBZ_QOBUZ_APP_ID").ok(),
+            std::env::var("QOBUZ_APP_ID").ok(),
+        ]);
+        let pasted_user_auth_token = first_non_empty([
+            user_auth_token.clone(),
+            cli.user_auth_token.clone(),
+            std::env::var("QBZ_QOBUZ_USER_AUTH_TOKEN").ok(),
+            std::env::var("QOBUZ_USER_AUTH_TOKEN").ok(),
+        ]);
+
+        if *manual || pasted_app_id.is_some() || pasted_user_auth_token.is_some()
+        {
+            qconnect::manual_login(pasted_app_id, pasted_user_auth_token)
+                .context("save pasted Qobuz credentials")?;
+            return Ok(());
+        }
+
         qconnect::browser_login(
             bind,
             Duration::from_secs(*timeout_secs),
