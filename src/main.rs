@@ -122,6 +122,9 @@ enum Command
         /// Preferred Qobuz playback quality.
         #[arg(long, default_value_t = PlaybackQuality::UltraHiRes)]
         audio_quality: PlaybackQuality,
+        /// Disable MPRIS/D-Bus media controls.
+        #[arg(long)]
+        no_mpris: bool,
     },
     /// Connect, request state, print events, and exit.
     Status
@@ -318,15 +321,22 @@ async fn main() -> Result<()>
         return Ok(());
     }
 
-    let (enable_renderer, enable_audio, audio_device, audio_quality) = match &command
+    let (enable_renderer, enable_audio, enable_mpris, audio_device, audio_quality) = match &command
     {
         Command::Serve {
             no_audio,
+            no_mpris,
             audio_device,
             audio_quality,
             ..
-        } => (true, !*no_audio, audio_device.clone(), audio_quality.to_qobuz_quality()),
-        _ => (false, false, None, Quality::Lossless),
+        } => (
+            true,
+            !*no_audio,
+            !*no_audio && !*no_mpris,
+            audio_device.clone(),
+            audio_quality.to_qobuz_quality(),
+        ),
+        _ => (false, false, false, None, Quality::Lossless),
     };
     let wait_after_connect = wait_secs_for(&command);
 
@@ -365,6 +375,7 @@ async fn main() -> Result<()>
         json: cli.json,
         audio_device,
         audio_quality,
+        enable_mpris,
     };
 
     let client = Arc::new(

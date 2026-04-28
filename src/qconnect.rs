@@ -1,13 +1,13 @@
 use std::{
     path::PathBuf,
-    sync::Arc,
+    sync::{Arc, Mutex as StdMutex},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use qbz_audio::{AudioDiagnostic, AudioSettings};
-use qbz_models::Quality;
+use qbz_models::{Quality, Track};
 use qbz_player::Player;
 use qbz_qobuz::QobuzClient;
 use qconnect_app::{
@@ -17,8 +17,11 @@ use qconnect_app::{
 use qconnect_core::QueueItem;
 use qconnect_transport_ws::{NativeWsTransport, TransportEvent, WsTransportConfig};
 use serde_json::{Value, json};
+use souvlaki::{
+    MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use tokio::sync::{Mutex, broadcast};
+use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
@@ -154,6 +157,7 @@ pub struct ClientOptions
     pub json: bool,
     pub audio_device: Option<String>,
     pub audio_quality: Quality,
+    pub enable_mpris: bool,
 }
 
 pub struct QconnectClient
@@ -174,10 +178,19 @@ impl QconnectClient
         let device_uuid = resolve_device_uuid(options.device_uuid.as_deref())?;
         let printer = Printer::new(options.json);
         let config = resolve_transport_config(&options).await?;
+        let (mpris_tx, mpris_rx) = if options.enable_mpris
+        {
+            let (tx, rx) = mpsc::unbounded_channel();
+            (Some(tx), Some(rx))
+        }
+        else
+        {
+            (None, None)
+        };
         let audio = if enable_audio
         {
             Some(
-                AudioPlayback::new(&options, printer.clone())
+                AudioPlayback::new(&options, printer.clone(), mpris_tx)
                     .await
                     .context("initialize audio playback")?,
             )
@@ -193,7 +206,8 @@ impl QconnectClient
                 "endpoint": config.endpoint_url,
                 "device_name": device_name,
                 "renderer": enable_renderer,
-                "audio": audio.is_some()
+                "audio": audio.is_some(),
+                "mpris": options.enable_mpris
             }),
         );
 
@@ -201,6 +215,11 @@ impl QconnectClient
         let sink = Arc::new(CliEventSink::new(printer.clone(), audio));
         let app = Arc::new(QconnectApp::new(transport, Arc::clone(&sink)));
         let transport_rx = app.subscribe_transport_events();
+
+        if let Some(rx) = mpris_rx
+        {
+            spawn_mpris_command_loop(Arc::clone(&app), rx, printer.clone());
+        }
 
         spawn_transport_event_loop(
             Arc::clone(&app),
@@ -1019,6 +1038,249 @@ impl Printer
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+enum MprisCommand
+{
+    Play,
+    Pause,
+    Toggle,
+    Stop,
+    Next,
+    Previous,
+}
+
+fn start_mpris(
+    printer: &Printer,
+    sender: mpsc::UnboundedSender<MprisCommand>,
+) -> Option<Arc<StdMutex<MediaControls>>>
+{
+    let config = PlatformConfig {
+        dbus_name: "com.qconnect.cli",
+        display_name: "qconnect",
+        hwnd: None,
+    };
+
+    let mut controls = match MediaControls::new(config)
+    {
+        Ok(controls) => controls,
+        Err(err) =>
+        {
+            printer.event("mpris_error", json!({ "error": format!("{err:?}") }));
+            return None;
+        }
+    };
+
+    let event_sender = sender.clone();
+    if let Err(err) = controls.attach(move |event| {
+        let command = match event
+        {
+            MediaControlEvent::Play => Some(MprisCommand::Play),
+            MediaControlEvent::Pause => Some(MprisCommand::Pause),
+            MediaControlEvent::Toggle => Some(MprisCommand::Toggle),
+            MediaControlEvent::Stop => Some(MprisCommand::Stop),
+            MediaControlEvent::Next => Some(MprisCommand::Next),
+            MediaControlEvent::Previous => Some(MprisCommand::Previous),
+            _ => None,
+        };
+        if let Some(command) = command
+        {
+            let _ = event_sender.send(command);
+        }
+    })
+    {
+        printer.event("mpris_error", json!({ "error": format!("{err:?}") }));
+        return None;
+    }
+
+    let _ = controls.set_playback(MediaPlayback::Stopped);
+    printer.event("mpris_ready", json!({ "dbus_name": "com.qconnect.cli" }));
+    Some(Arc::new(StdMutex::new(controls)))
+}
+
+fn update_mpris_metadata(controls: &Arc<StdMutex<MediaControls>>, track: &Track)
+{
+    let title = track.title.as_str();
+    let artist = track
+        .performer
+        .as_ref()
+        .map(|artist| artist.name.as_str())
+        .unwrap_or("");
+    let album = track
+        .album
+        .as_ref()
+        .map(|album| album.title.as_str())
+        .unwrap_or("");
+
+    if let Ok(mut controls) = controls.lock()
+    {
+        let _ = controls.set_metadata(MediaMetadata {
+            title: Some(title),
+            artist: Some(artist),
+            album: Some(album),
+            duration: Some(Duration::from_secs(track.duration as u64)),
+            ..Default::default()
+        });
+    }
+}
+
+fn update_mpris_playback(
+    controls: &Arc<StdMutex<MediaControls>>,
+    playing_state: i32,
+    position_secs: u64,
+)
+{
+    let position = Some(MediaPosition(Duration::from_secs(position_secs)));
+    let playback = match playing_state
+    {
+        PLAYING_STATE_PLAYING => MediaPlayback::Playing { progress: position },
+        PLAYING_STATE_PAUSED => MediaPlayback::Paused { progress: position },
+        _ => MediaPlayback::Stopped,
+    };
+
+    if let Ok(mut controls) = controls.lock()
+    {
+        let _ = controls.set_playback(playback);
+    }
+}
+
+fn spawn_mpris_command_loop(
+    app: Arc<App>,
+    mut rx: mpsc::UnboundedReceiver<MprisCommand>,
+    printer: Printer,
+)
+{
+    tokio::spawn(async move {
+        while let Some(command) = rx.recv().await
+        {
+            if let Err(err) = handle_mpris_command(&app, command).await
+            {
+                printer.event(
+                    "mpris_command_error",
+                    json!({
+                        "command": format!("{command:?}"),
+                        "error": err.to_string()
+                    }),
+                );
+            }
+        }
+    });
+}
+
+async fn handle_mpris_command(app: &Arc<App>, command: MprisCommand) -> Result<()>
+{
+    match command
+    {
+        MprisCommand::Play => send_mpris_player_state(app, PLAYING_STATE_PLAYING, None).await,
+        MprisCommand::Pause => send_mpris_player_state(app, PLAYING_STATE_PAUSED, None).await,
+        MprisCommand::Stop => send_mpris_player_state(app, PLAYING_STATE_STOPPED, None).await,
+        MprisCommand::Toggle =>
+        {
+            let renderer = app.renderer_state_snapshot().await;
+            let next_state = if renderer.playing_state == Some(PLAYING_STATE_PLAYING)
+            {
+                PLAYING_STATE_PAUSED
+            }
+            else
+            {
+                PLAYING_STATE_PLAYING
+            };
+            send_mpris_player_state(app, next_state, None).await
+        }
+        MprisCommand::Next =>
+        {
+            let target = adjacent_queue_item(app, 1).await;
+            send_mpris_player_state(app, PLAYING_STATE_PLAYING, target).await
+        }
+        MprisCommand::Previous =>
+        {
+            let target = adjacent_queue_item(app, -1).await;
+            send_mpris_player_state(app, PLAYING_STATE_PLAYING, target).await
+        }
+    }
+}
+
+async fn adjacent_queue_item(app: &Arc<App>, direction: i32) -> Option<QueueItem>
+{
+    let renderer = app.renderer_state_snapshot().await;
+    let current = renderer.current_track?;
+    let queue = app.queue_state_snapshot().await;
+    let ordered = ordered_queue_items(&queue);
+    let current_index = ordered
+        .iter()
+        .position(|item| item.queue_item_id == current.queue_item_id)?;
+    let next_index = current_index as i32 + direction;
+    if next_index < 0
+    {
+        return None;
+    }
+    ordered.get(next_index as usize).cloned()
+}
+
+fn ordered_queue_items(queue: &QConnectQueueState) -> Vec<QueueItem>
+{
+    if queue.shuffle_mode
+    {
+        if let Some(order) = &queue.shuffle_order
+        {
+            return order
+                .iter()
+                .filter_map(|index| queue.queue_items.get(*index).cloned())
+                .collect();
+        }
+    }
+    queue.queue_items.clone()
+}
+
+async fn send_mpris_player_state(
+    app: &Arc<App>,
+    playing_state: i32,
+    target_track: Option<QueueItem>,
+) -> Result<()>
+{
+    let renderer = app.renderer_state_snapshot().await;
+    let queue = app.queue_state_snapshot().await;
+    let has_explicit_target = target_track.is_some();
+    let mut current_track = target_track.or(renderer.current_track);
+    if current_track.is_none() && playing_state == PLAYING_STATE_PLAYING
+    {
+        current_track = ordered_queue_items(&queue).first().cloned();
+    }
+    let current_position = if has_explicit_target
+    {
+        Some(0)
+    }
+    else
+    {
+        renderer
+            .current_position_ms
+            .and_then(|value| i32::try_from(value).ok())
+    };
+
+    let current_queue_item = current_track.as_ref().map(|item| {
+        json!({
+            "queue_version": {
+                "major": queue.version.major,
+                "minor": queue.version.minor
+            },
+            "id": item.queue_item_id
+        })
+    });
+
+    let command = app
+        .build_queue_command(
+            QueueCommandType::CtrlSrvrSetPlayerState,
+            json!({
+                "playing_state": playing_state,
+                "current_position": current_position,
+                "current_queue_item": current_queue_item
+            }),
+        )
+        .await;
+    let action_uuid = app.send_queue_command(command).await?;
+    clear_pending_if_matches(app, &action_uuid).await;
+    Ok(())
+}
+
 struct AudioPlayback
 {
     client: QobuzClient,
@@ -1026,11 +1288,16 @@ struct AudioPlayback
     printer: Printer,
     preferred_quality: Quality,
     loading: Mutex<Option<JoinHandle<()>>>,
+    mpris: Option<Arc<StdMutex<MediaControls>>>,
 }
 
 impl AudioPlayback
 {
-    async fn new(options: &ClientOptions, printer: Printer) -> Result<Arc<Self>>
+    async fn new(
+        options: &ClientOptions,
+        printer: Printer,
+        mpris_sender: Option<mpsc::UnboundedSender<MprisCommand>>,
+    ) -> Result<Arc<Self>>
     {
         let token = options.user_auth_token.as_deref().ok_or_else(|| {
             anyhow!(
@@ -1054,6 +1321,7 @@ impl AudioPlayback
             None,
             AudioDiagnostic::new(),
         );
+        let mpris = mpris_sender.and_then(|sender| start_mpris(&printer, sender));
 
         printer.event(
             "audio_ready",
@@ -1069,6 +1337,7 @@ impl AudioPlayback
             printer,
             preferred_quality: options.audio_quality,
             loading: Mutex::new(None),
+            mpris,
         }))
     }
 
@@ -1109,6 +1378,7 @@ impl AudioPlayback
         let player = Arc::clone(&self.player);
         let client = self.client.clone();
         let printer = self.printer.clone();
+        let mpris = self.mpris.clone();
         let track_id = track.track_id;
         let handle = tokio::spawn(async move {
             printer.event(
@@ -1119,6 +1389,16 @@ impl AudioPlayback
                     "quality": quality.label()
                 }),
             );
+            if let Some(mpris) = mpris.clone()
+            {
+                let client = client.clone();
+                tokio::spawn(async move {
+                    if let Ok(track) = client.get_track(track_id).await
+                    {
+                        update_mpris_metadata(&mpris, &track);
+                    }
+                });
+            }
             match player.play_track(&client, track_id, quality).await
             {
                 Ok(()) =>
@@ -1201,10 +1481,19 @@ impl AudioPlayback
         let event = self.player.get_playback_event();
         if event.track_id == 0
         {
-            return fallback.snapshot();
+            let snapshot = fallback.snapshot();
+            if let Some(mpris) = &self.mpris
+            {
+                update_mpris_playback(
+                    mpris,
+                    snapshot.playing_state,
+                    snapshot.current_position_ms / 1000,
+                );
+            }
+            return snapshot;
         }
 
-        PlaybackSnapshot {
+        let snapshot = PlaybackSnapshot {
             playing_state: if event.is_playing
             {
                 PLAYING_STATE_PLAYING
@@ -1215,7 +1504,12 @@ impl AudioPlayback
             },
             current_position_ms: event.position.saturating_mul(1000),
             duration_ms: event.duration.saturating_mul(1000),
+        };
+        if let Some(mpris) = &self.mpris
+        {
+            update_mpris_playback(mpris, snapshot.playing_state, event.position);
         }
+        snapshot
     }
 }
 
