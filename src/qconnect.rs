@@ -33,6 +33,7 @@ const JOIN_SESSION_REASON_CONTROLLER_REQUEST: i32 = 1;
 const AUDIO_QUALITY_MP3: i32 = 1;
 const AUDIO_QUALITY_HIRES_LEVEL2: i32 = 4;
 const VOLUME_REMOTE_CONTROL_ALLOWED: i32 = 2;
+const AUDIO_LOAD_ATTEMPTS: usize = 3;
 
 type App = QconnectApp<NativeWsTransport, CliEventSink>;
 
@@ -1226,12 +1227,26 @@ async fn handle_mpris_command(app: &Arc<App>, command: MprisCommand) -> Result<(
         MprisCommand::Next =>
         {
             let target = adjacent_queue_item(app, 1).await;
-            send_mpris_player_state(app, PLAYING_STATE_PLAYING, target).await
+            if target.is_some()
+            {
+                send_mpris_player_state(app, PLAYING_STATE_PLAYING, target).await
+            }
+            else
+            {
+                send_mpris_player_state(app, PLAYING_STATE_STOPPED, None).await
+            }
         }
         MprisCommand::Previous =>
         {
             let target = adjacent_queue_item(app, -1).await;
-            send_mpris_player_state(app, PLAYING_STATE_PLAYING, target).await
+            if target.is_some()
+            {
+                send_mpris_player_state(app, PLAYING_STATE_PLAYING, target).await
+            }
+            else
+            {
+                Ok(())
+            }
         }
     }
 }
@@ -1326,6 +1341,7 @@ struct AudioPlayback
     preferred_quality: Quality,
     loading: Mutex<Option<JoinHandle<()>>>,
     mpris: Option<Arc<StdMutex<MediaControls>>>,
+    control_sender: Option<mpsc::UnboundedSender<MprisCommand>>,
 }
 
 impl AudioPlayback
@@ -1358,7 +1374,9 @@ impl AudioPlayback
             None,
             AudioDiagnostic::new(),
         );
-        let mpris = mpris_sender.and_then(|sender| start_mpris(&printer, sender));
+        let mpris = mpris_sender
+            .clone()
+            .and_then(|sender| start_mpris(&printer, sender));
 
         printer.event(
             "audio_ready",
@@ -1375,6 +1393,7 @@ impl AudioPlayback
             preferred_quality: options.audio_quality,
             loading: Mutex::new(None),
             mpris,
+            control_sender: mpris_sender,
         }))
     }
 
@@ -1416,6 +1435,7 @@ impl AudioPlayback
         let client = self.client.clone();
         let printer = self.printer.clone();
         let mpris = self.mpris.clone();
+        let control_sender = self.control_sender.clone();
         let track_id = track.track_id;
         let handle = tokio::spawn(async move {
             printer.event(
@@ -1436,26 +1456,56 @@ impl AudioPlayback
                     }
                 });
             }
-            match player.play_track(&client, track_id, quality).await
+            let mut last_error = None;
+            for attempt in 1..=AUDIO_LOAD_ATTEMPTS
             {
-                Ok(()) =>
+                match player.play_track(&client, track_id, quality).await
                 {
-                    if position_ms > 0
+                    Ok(()) =>
                     {
-                        if let Err(err) = player.seek(position_ms / 1000)
+                        if position_ms > 0
                         {
-                            printer.event(
-                                "audio_error",
-                                json!({ "error": err, "track_id": track_id }),
-                            );
+                            if let Err(err) = player.seek(position_ms / 1000)
+                            {
+                                printer.event(
+                                    "audio_error",
+                                    json!({ "error": err, "track_id": track_id }),
+                                );
+                            }
+                        }
+                        printer.event("audio_started", json!({ "track_id": track_id }));
+                        return;
+                    }
+                    Err(err) =>
+                    {
+                        printer.event(
+                            "audio_load_retry",
+                            json!({
+                                "attempt": attempt,
+                                "max_attempts": AUDIO_LOAD_ATTEMPTS,
+                                "error": err,
+                                "track_id": track_id
+                            }),
+                        );
+                        last_error = Some(err);
+                        if attempt < AUDIO_LOAD_ATTEMPTS
+                        {
+                            tokio::time::sleep(Duration::from_secs(attempt as u64)).await;
                         }
                     }
-                    printer.event("audio_started", json!({ "track_id": track_id }));
                 }
-                Err(err) =>
-                {
-                    printer.event("audio_error", json!({ "error": err, "track_id": track_id }));
-                }
+            }
+
+            printer.event(
+                "audio_error",
+                json!({
+                    "error": last_error.unwrap_or_else(|| "audio load failed".to_string()),
+                    "track_id": track_id
+                }),
+            );
+            if let Some(sender) = control_sender
+            {
+                let _ = sender.send(MprisCommand::Next);
             }
         });
         *self.loading.lock().await = Some(handle);
@@ -1535,6 +1585,20 @@ impl AudioPlayback
             .as_ref()
             .map(|track| track.track_id == event.track_id)
             .unwrap_or(false);
+        if !event_matches_renderer_track
+        {
+            let snapshot = fallback.snapshot();
+            if let Some(mpris) = &self.mpris
+            {
+                update_mpris_playback(
+                    mpris,
+                    snapshot.playing_state,
+                    snapshot.current_position_ms / 1000,
+                );
+            }
+            return snapshot;
+        }
+
         let finished = event_matches_renderer_track
             && !event.is_playing
             && fallback.playing_state == PLAYING_STATE_PLAYING
