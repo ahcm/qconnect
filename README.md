@@ -3,6 +3,12 @@
 Standalone Qobuz Connect CLI client built on the `qconnect-*` Rust crates from
 [`vicrodh/qbz`](https://github.com/vicrodh/qbz).
 
+## Install
+
+```sh
+cargo install --git https://github.com/ahcm/qconnect
+```
+
 ## Credentials
 
 The easiest setup on a desktop machine is browser OAuth:
