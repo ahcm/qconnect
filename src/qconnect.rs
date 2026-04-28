@@ -6,6 +6,9 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
+use qbz_audio::{AudioDiagnostic, AudioSettings};
+use qbz_models::Quality;
+use qbz_player::Player;
 use qbz_qobuz::QobuzClient;
 use qconnect_app::{
     QConnectQueueState, QConnectRendererState, QconnectApp, QconnectAppEvent, QconnectEventSink,
@@ -16,6 +19,7 @@ use qconnect_transport_ws::{NativeWsTransport, TransportEvent, WsTransportConfig
 use serde_json::{Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::sync::{Mutex, broadcast};
+use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 const PLAYING_STATE_STOPPED: i32 = 1;
@@ -148,6 +152,8 @@ pub struct ClientOptions
     pub keepalive_interval_ms: u64,
     pub qcloud_proto: u32,
     pub json: bool,
+    pub audio_device: Option<String>,
+    pub audio_quality: Quality,
 }
 
 pub struct QconnectClient
@@ -158,24 +164,41 @@ pub struct QconnectClient
 
 impl QconnectClient
 {
-    pub async fn connect(options: ClientOptions, enable_renderer: bool) -> Result<Self>
+    pub async fn connect(
+        options: ClientOptions,
+        enable_renderer: bool,
+        enable_audio: bool,
+    ) -> Result<Self>
     {
         let device_name = resolve_device_name(options.device_name.as_deref());
         let device_uuid = resolve_device_uuid(options.device_uuid.as_deref())?;
         let printer = Printer::new(options.json);
         let config = resolve_transport_config(&options).await?;
+        let audio = if enable_audio
+        {
+            Some(
+                AudioPlayback::new(&options, printer.clone())
+                    .await
+                    .context("initialize audio playback")?,
+            )
+        }
+        else
+        {
+            None
+        };
 
         printer.event(
             "connecting",
             json!({
                 "endpoint": config.endpoint_url,
                 "device_name": device_name,
-                "renderer": enable_renderer
+                "renderer": enable_renderer,
+                "audio": audio.is_some()
             }),
         );
 
         let transport = Arc::new(NativeWsTransport::new());
-        let sink = Arc::new(CliEventSink::new(printer.clone()));
+        let sink = Arc::new(CliEventSink::new(printer.clone(), audio));
         let app = Arc::new(QconnectApp::new(transport, Arc::clone(&sink)));
         let transport_rx = app.subscribe_transport_events();
 
@@ -996,25 +1019,286 @@ impl Printer
     }
 }
 
+struct AudioPlayback
+{
+    client: QobuzClient,
+    player: Arc<Player>,
+    printer: Printer,
+    preferred_quality: Quality,
+    loading: Mutex<Option<JoinHandle<()>>>,
+}
+
+impl AudioPlayback
+{
+    async fn new(options: &ClientOptions, printer: Printer) -> Result<Arc<Self>>
+    {
+        let token = options.user_auth_token.as_deref().ok_or_else(|| {
+            anyhow!(
+                "audio playback requires --user-auth-token/QOBUZ_USER_AUTH_TOKEN; use serve --no-audio for state-only rendering"
+            )
+        })?;
+
+        let client = QobuzClient::new().context("create Qobuz playback client")?;
+        client
+            .init()
+            .await
+            .context("extract Qobuz playback credentials")?;
+        client
+            .login_with_token(token)
+            .await
+            .context("restore Qobuz playback session")?;
+
+        let player = Player::new(
+            options.audio_device.clone(),
+            AudioSettings::default(),
+            None,
+            AudioDiagnostic::new(),
+        );
+
+        printer.event(
+            "audio_ready",
+            json!({
+                "device": options.audio_device,
+                "quality": options.audio_quality.label()
+            }),
+        );
+
+        Ok(Arc::new(Self {
+            client,
+            player: Arc::new(player),
+            printer,
+            preferred_quality: options.audio_quality,
+            loading: Mutex::new(None),
+        }))
+    }
+
+    async fn play(&self, track: QueueItem, position_ms: u64, max_audio_quality: i32)
+    {
+        let remote_max_quality =
+            connect_quality_to_qobuz(max_audio_quality).unwrap_or(self.preferred_quality);
+        let quality = lower_quality(self.preferred_quality, remote_max_quality);
+        let current = self.player.get_playback_event();
+        if current.track_id == track.track_id && self.player.has_loaded_audio()
+        {
+            if position_ms > 0
+            {
+                if let Err(err) = self.player.seek(position_ms / 1000)
+                {
+                    self.printer
+                        .event("audio_error", json!({ "error": err, "track_id": track.track_id }));
+                }
+            }
+            if let Err(err) = self.player.resume()
+            {
+                self.printer
+                    .event("audio_error", json!({ "error": err, "track_id": track.track_id }));
+            }
+            return;
+        }
+
+        self.replace_loading_task(track, position_ms, quality).await;
+    }
+
+    async fn replace_loading_task(&self, track: QueueItem, position_ms: u64, quality: Quality)
+    {
+        if let Some(handle) = self.loading.lock().await.take()
+        {
+            handle.abort();
+        }
+
+        let player = Arc::clone(&self.player);
+        let client = self.client.clone();
+        let printer = self.printer.clone();
+        let track_id = track.track_id;
+        let handle = tokio::spawn(async move {
+            printer.event(
+                "audio_loading",
+                json!({
+                    "track_id": track_id,
+                    "queue_item_id": track.queue_item_id,
+                    "quality": quality.label()
+                }),
+            );
+            match player.play_track(&client, track_id, quality).await
+            {
+                Ok(()) =>
+                {
+                    if position_ms > 0
+                    {
+                        if let Err(err) = player.seek(position_ms / 1000)
+                        {
+                            printer.event(
+                                "audio_error",
+                                json!({ "error": err, "track_id": track_id }),
+                            );
+                        }
+                    }
+                    printer.event("audio_started", json!({ "track_id": track_id }));
+                }
+                Err(err) =>
+                {
+                    printer.event("audio_error", json!({ "error": err, "track_id": track_id }));
+                }
+            }
+        });
+        *self.loading.lock().await = Some(handle);
+    }
+
+    async fn pause(&self)
+    {
+        if let Err(err) = self.player.pause()
+        {
+            self.printer.event("audio_error", json!({ "error": err }));
+        }
+    }
+
+    async fn resume(&self)
+    {
+        if let Err(err) = self.player.resume()
+        {
+            self.printer.event("audio_error", json!({ "error": err }));
+        }
+    }
+
+    async fn stop(&self)
+    {
+        if let Some(handle) = self.loading.lock().await.take()
+        {
+            handle.abort();
+        }
+        if let Err(err) = self.player.stop()
+        {
+            self.printer.event("audio_error", json!({ "error": err }));
+        }
+    }
+
+    async fn seek(&self, position_ms: u64)
+    {
+        if let Err(err) = self.player.seek(position_ms / 1000)
+        {
+            self.printer.event("audio_error", json!({ "error": err }));
+        }
+    }
+
+    async fn set_volume(&self, volume: i32, muted: bool)
+    {
+        let player_volume = if muted
+        {
+            0.0
+        }
+        else
+        {
+            volume.clamp(0, 100) as f32 / 100.0
+        };
+        if let Err(err) = self.player.set_volume(player_volume)
+        {
+            self.printer.event("audio_error", json!({ "error": err }));
+        }
+    }
+
+    fn snapshot(&self, fallback: &PlaybackState) -> PlaybackSnapshot
+    {
+        let event = self.player.get_playback_event();
+        if event.track_id == 0
+        {
+            return fallback.snapshot();
+        }
+
+        PlaybackSnapshot {
+            playing_state: if event.is_playing
+            {
+                PLAYING_STATE_PLAYING
+            }
+            else
+            {
+                fallback.playing_state
+            },
+            current_position_ms: event.position.saturating_mul(1000),
+            duration_ms: event.duration.saturating_mul(1000),
+        }
+    }
+}
+
+fn connect_quality_to_qobuz(max_audio_quality: i32) -> Option<Quality>
+{
+    match max_audio_quality
+    {
+        value if value <= 0 => None,
+        1 => Some(Quality::Mp3),
+        2 => Some(Quality::Lossless),
+        3 => Some(Quality::HiRes),
+        _ => Some(Quality::UltraHiRes),
+    }
+}
+
+fn lower_quality(left: Quality, right: Quality) -> Quality
+{
+    if quality_rank(left) <= quality_rank(right)
+    {
+        left
+    }
+    else
+    {
+        right
+    }
+}
+
+fn quality_rank(quality: Quality) -> u8
+{
+    match quality
+    {
+        Quality::Mp3 => 1,
+        Quality::Lossless => 2,
+        Quality::HiRes => 3,
+        Quality::UltraHiRes => 4,
+    }
+}
+
+enum AudioAction
+{
+    Play
+    {
+        track: QueueItem,
+        position_ms: u64,
+        max_audio_quality: i32,
+    },
+    Resume,
+    Pause,
+    Stop,
+    Seek(u64),
+    Volume
+    {
+        volume: i32,
+        muted: bool,
+    },
+}
+
 struct CliEventSink
 {
     printer: Printer,
     playback: Mutex<PlaybackState>,
+    audio: Option<Arc<AudioPlayback>>,
 }
 
 impl CliEventSink
 {
-    fn new(printer: Printer) -> Self
+    fn new(printer: Printer, audio: Option<Arc<AudioPlayback>>) -> Self
     {
         Self {
             printer,
             playback: Mutex::new(PlaybackState::default()),
+            audio,
         }
     }
 
     async fn playback_snapshot(&self) -> PlaybackSnapshot
     {
-        self.playback.lock().await.snapshot()
+        let playback = self.playback.lock().await;
+        match &self.audio
+        {
+            Some(audio) => audio.snapshot(&playback),
+            None => playback.snapshot(),
+        }
     }
 }
 
@@ -1102,7 +1386,7 @@ impl CliEventSink
     async fn apply_renderer_command(&self, command: &RendererCommand)
     {
         let mut playback = self.playback.lock().await;
-        match command
+        let action = match command
         {
             RendererCommand::SetState {
                 playing_state,
@@ -1128,6 +1412,27 @@ impl CliEventSink
                     playback.next_track = Some(track.clone());
                 }
                 playback.updated_at = Instant::now();
+                match playing_state
+                {
+                    Some(PLAYING_STATE_PLAYING) =>
+                    {
+                        if let Some(track) = playback.current_track.clone()
+                        {
+                            Some(AudioAction::Play {
+                                track,
+                                position_ms: playback.current_position_ms,
+                                max_audio_quality: playback.max_audio_quality,
+                            })
+                        }
+                        else
+                        {
+                            Some(AudioAction::Resume)
+                        }
+                    }
+                    Some(PLAYING_STATE_PAUSED) => Some(AudioAction::Pause),
+                    Some(PLAYING_STATE_STOPPED) => Some(AudioAction::Stop),
+                    _ => current_position_ms.map(AudioAction::Seek),
+                }
             }
             RendererCommand::SetVolume {
                 volume,
@@ -1142,19 +1447,50 @@ impl CliEventSink
                 {
                     playback.volume = playback.volume.saturating_add(*delta).clamp(0, 100);
                 }
+                Some(AudioAction::Volume {
+                    volume: playback.volume,
+                    muted: playback.muted,
+                })
             }
             RendererCommand::MuteVolume { value } =>
             {
                 playback.muted = *value;
+                Some(AudioAction::Volume {
+                    volume: playback.volume,
+                    muted: playback.muted,
+                })
             }
             RendererCommand::SetMaxAudioQuality { max_audio_quality } =>
             {
                 playback.max_audio_quality = *max_audio_quality;
+                None
             }
             RendererCommand::SetActive { .. }
             | RendererCommand::SetLoopMode { .. }
-            | RendererCommand::SetShuffleMode { .. } =>
-            {}
+            | RendererCommand::SetShuffleMode { .. } => None,
+        };
+        drop(playback);
+
+        if let Some(audio) = &self.audio
+        {
+            match action
+            {
+                Some(AudioAction::Play {
+                    track,
+                    position_ms,
+                    max_audio_quality,
+                }) => audio.play(track, position_ms, max_audio_quality).await,
+                Some(AudioAction::Resume) => audio.resume().await,
+                Some(AudioAction::Pause) => audio.pause().await,
+                Some(AudioAction::Stop) => audio.stop().await,
+                Some(AudioAction::Seek(position_ms)) => audio.seek(position_ms).await,
+                Some(AudioAction::Volume { volume, muted }) =>
+                {
+                    audio.set_volume(volume, muted).await
+                }
+                None =>
+                {}
+            }
         }
     }
 }

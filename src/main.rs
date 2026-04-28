@@ -1,9 +1,10 @@
 mod qconnect;
 
-use std::{sync::Arc, time::Duration};
+use std::{fmt, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use qbz_models::Quality;
 use qconnect::{ClientOptions, QconnectClient};
 use qconnect_app::QueueCommandType;
 use serde_json::json;
@@ -112,6 +113,15 @@ enum Command
         /// Periodic renderer state report interval.
         #[arg(long, default_value_t = 2)]
         report_interval_secs: u64,
+        /// Disable local audio output while still advertising a renderer.
+        #[arg(long)]
+        no_audio: bool,
+        /// Output device name for local audio playback.
+        #[arg(long, env = "QCONNECT_AUDIO_DEVICE")]
+        audio_device: Option<String>,
+        /// Preferred Qobuz playback quality.
+        #[arg(long, default_value_t = PlaybackQuality::UltraHiRes)]
+        audio_quality: PlaybackQuality,
     },
     /// Connect, request state, print events, and exit.
     Status
@@ -221,6 +231,44 @@ enum RepeatMode
     All,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum PlaybackQuality
+{
+    Mp3,
+    Lossless,
+    HiRes,
+    UltraHiRes,
+}
+
+impl PlaybackQuality
+{
+    fn to_qobuz_quality(self) -> Quality
+    {
+        match self
+        {
+            PlaybackQuality::Mp3 => Quality::Mp3,
+            PlaybackQuality::Lossless => Quality::Lossless,
+            PlaybackQuality::HiRes => Quality::HiRes,
+            PlaybackQuality::UltraHiRes => Quality::UltraHiRes,
+        }
+    }
+}
+
+impl fmt::Display for PlaybackQuality
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+    {
+        let value = match self
+        {
+            PlaybackQuality::Mp3 => "mp3",
+            PlaybackQuality::Lossless => "lossless",
+            PlaybackQuality::HiRes => "hi-res",
+            PlaybackQuality::UltraHiRes => "ultra-hi-res",
+        };
+        f.write_str(value)
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()>
 {
@@ -270,7 +318,16 @@ async fn main() -> Result<()>
         return Ok(());
     }
 
-    let enable_renderer = matches!(command, Command::Serve { .. });
+    let (enable_renderer, enable_audio, audio_device, audio_quality) = match &command
+    {
+        Command::Serve {
+            no_audio,
+            audio_device,
+            audio_quality,
+            ..
+        } => (true, !*no_audio, audio_device.clone(), audio_quality.to_qobuz_quality()),
+        _ => (false, false, None, Quality::Lossless),
+    };
     let wait_after_connect = wait_secs_for(&command);
 
     let options = ClientOptions {
@@ -306,10 +363,12 @@ async fn main() -> Result<()>
         keepalive_interval_ms: cli.keepalive_interval_ms,
         qcloud_proto: cli.qcloud_proto,
         json: cli.json,
+        audio_device,
+        audio_quality,
     };
 
     let client = Arc::new(
-        QconnectClient::connect(options, enable_renderer)
+        QconnectClient::connect(options, enable_renderer, enable_audio)
             .await
             .context("connect to Qobuz Connect")?,
     );
@@ -319,6 +378,7 @@ async fn main() -> Result<()>
         Command::Login { .. } => unreachable!("login is handled before Connect startup"),
         Command::Serve {
             report_interval_secs,
+            ..
         } =>
         {
             client.spawn_state_reporter(Duration::from_secs(report_interval_secs.max(1)));
