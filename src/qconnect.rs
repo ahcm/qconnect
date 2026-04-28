@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use qbz_audio::{AudioDiagnostic, AudioSettings};
 use qbz_models::{Quality, Track};
 use qbz_player::Player;
-use qbz_qobuz::QobuzClient;
+use qbz_qobuz::{QobuzClient, cmaf_download_full};
 use qconnect_app::{
     QConnectQueueState, QConnectRendererState, QconnectApp, QconnectAppEvent, QconnectEventSink,
     QueueCommandType, RendererCommand, RendererReport, RendererReportType,
@@ -1459,7 +1459,7 @@ impl AudioPlayback
             let mut last_error = None;
             for attempt in 1..=AUDIO_LOAD_ATTEMPTS
             {
-                match player.play_track(&client, track_id, quality).await
+                match play_track_via_cmaf(&player, &client, track_id, quality).await
                 {
                     Ok(()) =>
                     {
@@ -1662,6 +1662,23 @@ fn quality_rank(quality: Quality) -> u8
         Quality::HiRes => 3,
         Quality::UltraHiRes => 4,
     }
+}
+
+async fn play_track_via_cmaf(
+    player: &Player,
+    client: &QobuzClient,
+    track_id: u64,
+    quality: Quality,
+) -> Result<(), String>
+{
+    log::info!("Player: downloading CMAF audio for track {} with quality {:?}", track_id, quality);
+    let audio_data = cmaf_download_full(client, track_id, quality).await?;
+    log::info!(
+        "Player: downloaded {} bytes of CMAF audio for track {}",
+        audio_data.len(),
+        track_id
+    );
+    player.play_data(audio_data, track_id)
 }
 
 enum AudioAction
