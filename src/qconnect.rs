@@ -292,10 +292,10 @@ impl QconnectClient
                 let queue_version = app.queue_state_snapshot().await.version;
                 let playback = sink.playback_snapshot().await;
                 let renderer = app.renderer_state_snapshot().await;
+                let report_current_track = report_current_track(&renderer, playback.track_id);
                 if playback.finished
                 {
-                    let current_queue_item_id = renderer
-                        .current_track
+                    let current_queue_item_id = report_current_track
                         .as_ref()
                         .map(|track| track.queue_item_id);
                     if current_queue_item_id.is_some()
@@ -324,8 +324,7 @@ impl QconnectClient
                     "buffer_state": BUFFER_STATE_OK,
                     "current_position": playback.current_position_ms,
                     "duration": playback.duration_ms,
-                    "current_queue_item_id": renderer
-                        .current_track
+                    "current_queue_item_id": report_current_track
                         .as_ref()
                         .and_then(|track| i32::try_from(track.queue_item_id).ok()),
                     "next_queue_item_id": renderer
@@ -1333,6 +1332,26 @@ async fn send_mpris_player_state(
     Ok(())
 }
 
+fn report_current_track(
+    renderer: &QConnectRendererState,
+    player_track_id: Option<u64>,
+) -> Option<QueueItem>
+{
+    match player_track_id
+    {
+        Some(track_id)
+            if renderer
+                .next_track
+                .as_ref()
+                .map(|track| track.track_id == track_id)
+                .unwrap_or(false) =>
+        {
+            renderer.next_track.clone()
+        }
+        _ => renderer.current_track.clone(),
+    }
+}
+
 struct AudioPlayback
 {
     client: QobuzClient,
@@ -1340,6 +1359,7 @@ struct AudioPlayback
     printer: Printer,
     preferred_quality: Quality,
     loading: Mutex<Option<JoinHandle<()>>>,
+    preloading: Arc<Mutex<Option<JoinHandle<()>>>>,
     mpris: Option<Arc<StdMutex<MediaControls>>>,
     control_sender: Option<mpsc::UnboundedSender<MprisCommand>>,
 }
@@ -1370,7 +1390,10 @@ impl AudioPlayback
 
         let player = Player::new(
             options.audio_device.clone(),
-            AudioSettings::default(),
+            AudioSettings {
+                gapless_enabled: true,
+                ..Default::default()
+            },
             None,
             AudioDiagnostic::new(),
         );
@@ -1392,12 +1415,19 @@ impl AudioPlayback
             printer,
             preferred_quality: options.audio_quality,
             loading: Mutex::new(None),
+            preloading: Arc::new(Mutex::new(None)),
             mpris,
             control_sender: mpris_sender,
         }))
     }
 
-    async fn play(&self, track: QueueItem, position_ms: u64, max_audio_quality: i32)
+    async fn play(
+        &self,
+        track: QueueItem,
+        next_track: Option<QueueItem>,
+        position_ms: u64,
+        max_audio_quality: i32,
+    )
     {
         let remote_max_quality =
             connect_quality_to_qobuz(max_audio_quality).unwrap_or(self.preferred_quality);
@@ -1421,12 +1451,23 @@ impl AudioPlayback
             return;
         }
 
-        self.replace_loading_task(track, position_ms, quality).await;
+        self.replace_loading_task(track, next_track, position_ms, quality)
+            .await;
     }
 
-    async fn replace_loading_task(&self, track: QueueItem, position_ms: u64, quality: Quality)
+    async fn replace_loading_task(
+        &self,
+        track: QueueItem,
+        next_track: Option<QueueItem>,
+        position_ms: u64,
+        quality: Quality,
+    )
     {
         if let Some(handle) = self.loading.lock().await.take()
+        {
+            handle.abort();
+        }
+        if let Some(handle) = self.preloading.lock().await.take()
         {
             handle.abort();
         }
@@ -1436,6 +1477,7 @@ impl AudioPlayback
         let printer = self.printer.clone();
         let mpris = self.mpris.clone();
         let control_sender = self.control_sender.clone();
+        let preloading = Arc::clone(&self.preloading);
         let track_id = track.track_id;
         let handle = tokio::spawn(async move {
             printer.event(
@@ -1474,6 +1516,56 @@ impl AudioPlayback
                             }
                         }
                         printer.event("audio_started", json!({ "track_id": track_id }));
+                        if let Some(next_track) = next_track
+                        {
+                            let prefetch_player = Arc::clone(&player);
+                            let prefetch_client = client.clone();
+                            let prefetch_printer = printer.clone();
+                            let prefetch_handle = tokio::spawn(async move {
+                                prefetch_printer.event(
+                                    "audio_preloading",
+                                    json!({
+                                        "track_id": next_track.track_id,
+                                        "queue_item_id": next_track.queue_item_id,
+                                        "quality": quality.label()
+                                    }),
+                                );
+                                match cmaf_download_full(
+                                    &prefetch_client,
+                                    next_track.track_id,
+                                    quality,
+                                )
+                                .await
+                                {
+                                    Ok(audio_data) =>
+                                    {
+                                        match prefetch_player
+                                            .play_next(audio_data, next_track.track_id)
+                                        {
+                                            Ok(()) => prefetch_printer.event(
+                                                "audio_preloaded",
+                                                json!({ "track_id": next_track.track_id }),
+                                            ),
+                                            Err(err) => prefetch_printer.event(
+                                                "audio_preload_error",
+                                                json!({
+                                                    "error": err,
+                                                    "track_id": next_track.track_id
+                                                }),
+                                            ),
+                                        }
+                                    }
+                                    Err(err) => prefetch_printer.event(
+                                        "audio_preload_error",
+                                        json!({
+                                            "error": err,
+                                            "track_id": next_track.track_id
+                                        }),
+                                    ),
+                                }
+                            });
+                            *preloading.lock().await = Some(prefetch_handle);
+                        }
                         return;
                     }
                     Err(err) =>
@@ -1580,12 +1672,17 @@ impl AudioPlayback
             return snapshot;
         }
 
-        let event_matches_renderer_track = fallback
+        let event_matches_current_track = fallback
             .current_track
             .as_ref()
             .map(|track| track.track_id == event.track_id)
             .unwrap_or(false);
-        if !event_matches_renderer_track
+        let event_matches_next_track = fallback
+            .next_track
+            .as_ref()
+            .map(|track| track.track_id == event.track_id)
+            .unwrap_or(false);
+        if !event_matches_current_track && !event_matches_next_track
         {
             let snapshot = fallback.snapshot();
             if let Some(mpris) = &self.mpris
@@ -1599,7 +1696,7 @@ impl AudioPlayback
             return snapshot;
         }
 
-        let finished = event_matches_renderer_track
+        let finished = event_matches_current_track
             && !event.is_playing
             && fallback.playing_state == PLAYING_STATE_PLAYING
             && event.duration > 0
@@ -1620,6 +1717,7 @@ impl AudioPlayback
             current_position_ms: event.position.saturating_mul(1000),
             duration_ms: event.duration.saturating_mul(1000),
             finished,
+            track_id: Some(event.track_id),
         };
         if let Some(mpris) = &self.mpris
         {
@@ -1686,6 +1784,7 @@ enum AudioAction
     Play
     {
         track: QueueItem,
+        next_track: Option<QueueItem>,
         position_ms: u64,
         max_audio_quality: i32,
     },
@@ -1847,6 +1946,7 @@ impl CliEventSink
                         {
                             Some(AudioAction::Play {
                                 track,
+                                next_track: playback.next_track.clone(),
                                 position_ms: playback.current_position_ms,
                                 max_audio_quality: playback.max_audio_quality,
                             })
@@ -1904,9 +2004,15 @@ impl CliEventSink
             {
                 Some(AudioAction::Play {
                     track,
+                    next_track,
                     position_ms,
                     max_audio_quality,
-                }) => audio.play(track, position_ms, max_audio_quality).await,
+                }) =>
+                {
+                    audio
+                        .play(track, next_track, position_ms, max_audio_quality)
+                        .await
+                }
                 Some(AudioAction::Resume) => audio.resume().await,
                 Some(AudioAction::Pause) => audio.pause().await,
                 Some(AudioAction::Stop) => audio.stop().await,
@@ -1971,6 +2077,7 @@ impl PlaybackState
             current_position_ms: self.current_position_ms.saturating_add(elapsed),
             duration_ms: self.duration_ms,
             finished: false,
+            track_id: self.current_track.as_ref().map(|track| track.track_id),
         }
     }
 }
@@ -1982,6 +2089,7 @@ struct PlaybackSnapshot
     current_position_ms: u64,
     duration_ms: u64,
     finished: bool,
+    track_id: Option<u64>,
 }
 
 #[allow(dead_code)]
