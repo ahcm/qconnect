@@ -284,11 +284,40 @@ impl QconnectClient
         let app = Arc::clone(&self.app);
         let sink = Arc::clone(&self.sink);
         tokio::spawn(async move {
+            let mut advanced_from_queue_item_id: Option<u64> = None;
             loop
             {
                 tokio::time::sleep(interval).await;
                 let queue_version = app.queue_state_snapshot().await.version;
                 let playback = sink.playback_snapshot().await;
+                if playback.finished
+                {
+                    let renderer = app.renderer_state_snapshot().await;
+                    let current_queue_item_id = renderer
+                        .current_track
+                        .as_ref()
+                        .map(|track| track.queue_item_id);
+                    if current_queue_item_id.is_some()
+                        && current_queue_item_id != advanced_from_queue_item_id
+                    {
+                        advanced_from_queue_item_id = current_queue_item_id;
+                        let target = adjacent_queue_item(&app, 1).await;
+                        if target.is_some()
+                        {
+                            if let Err(err) =
+                                send_mpris_player_state(&app, PLAYING_STATE_PLAYING, target).await
+                            {
+                                log::debug!("automatic next-track command failed: {err}");
+                            }
+                            continue;
+                        }
+                    }
+                }
+                else if playback.playing_state == PLAYING_STATE_PLAYING
+                {
+                    advanced_from_queue_item_id = None;
+                }
+
                 let payload = json!({
                     "playing_state": playback.playing_state,
                     "buffer_state": BUFFER_STATE_OK,
@@ -1493,10 +1522,18 @@ impl AudioPlayback
             return snapshot;
         }
 
+        let finished = !event.is_playing
+            && fallback.playing_state == PLAYING_STATE_PLAYING
+            && event.duration > 0
+            && event.position >= event.duration;
         let snapshot = PlaybackSnapshot {
             playing_state: if event.is_playing
             {
                 PLAYING_STATE_PLAYING
+            }
+            else if finished
+            {
+                PLAYING_STATE_STOPPED
             }
             else
             {
@@ -1504,6 +1541,7 @@ impl AudioPlayback
             },
             current_position_ms: event.position.saturating_mul(1000),
             duration_ms: event.duration.saturating_mul(1000),
+            finished,
         };
         if let Some(mpris) = &self.mpris
         {
@@ -1837,6 +1875,7 @@ impl PlaybackState
             playing_state: self.playing_state,
             current_position_ms: self.current_position_ms.saturating_add(elapsed),
             duration_ms: self.duration_ms,
+            finished: false,
         }
     }
 }
@@ -1847,6 +1886,7 @@ struct PlaybackSnapshot
     playing_state: i32,
     current_position_ms: u64,
     duration_ms: u64,
+    finished: bool,
 }
 
 #[allow(dead_code)]
