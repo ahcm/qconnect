@@ -290,9 +290,9 @@ impl QconnectClient
                 tokio::time::sleep(interval).await;
                 let queue_version = app.queue_state_snapshot().await.version;
                 let playback = sink.playback_snapshot().await;
+                let renderer = app.renderer_state_snapshot().await;
                 if playback.finished
                 {
-                    let renderer = app.renderer_state_snapshot().await;
                     let current_queue_item_id = renderer
                         .current_track
                         .as_ref()
@@ -323,6 +323,14 @@ impl QconnectClient
                     "buffer_state": BUFFER_STATE_OK,
                     "current_position": playback.current_position_ms,
                     "duration": playback.duration_ms,
+                    "current_queue_item_id": renderer
+                        .current_track
+                        .as_ref()
+                        .and_then(|track| i32::try_from(track.queue_item_id).ok()),
+                    "next_queue_item_id": renderer
+                        .next_track
+                        .as_ref()
+                        .and_then(|track| i32::try_from(track.queue_item_id).ok()),
                     "queue_version": {
                         "major": queue_version.major,
                         "minor": queue_version.minor
