@@ -1869,14 +1869,8 @@ impl QconnectEventSink for CliEventSink
             QconnectAppEvent::RendererUpdated(renderer) =>
             {
                 let mut playback = self.playback.lock().await;
-                if let Some(track) = renderer.current_track
-                {
-                    playback.current_track = Some(track);
-                }
-                if let Some(track) = renderer.next_track
-                {
-                    playback.next_track = Some(track);
-                }
+                playback.current_track = renderer.current_track;
+                playback.next_track = renderer.next_track;
             }
             QconnectAppEvent::SessionManagementEvent {
                 message_type,
