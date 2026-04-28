@@ -1522,7 +1522,13 @@ impl AudioPlayback
             return snapshot;
         }
 
-        let finished = !event.is_playing
+        let event_matches_renderer_track = fallback
+            .current_track
+            .as_ref()
+            .map(|track| track.track_id == event.track_id)
+            .unwrap_or(false);
+        let finished = event_matches_renderer_track
+            && !event.is_playing
             && fallback.playing_state == PLAYING_STATE_PLAYING
             && event.duration > 0
             && event.position >= event.duration;
