@@ -1425,7 +1425,7 @@ impl AudioPlayback
         &self,
         track: QueueItem,
         next_track: Option<QueueItem>,
-        position_ms: u64,
+        position_ms: Option<u64>,
         max_audio_quality: i32,
     )
     {
@@ -1435,9 +1435,9 @@ impl AudioPlayback
         let current = self.player.get_playback_event();
         if current.track_id == track.track_id && self.player.has_loaded_audio()
         {
-            if position_ms > 0
+            if let Some(pos_ms) = position_ms
             {
-                if let Err(err) = self.player.seek(position_ms / 1000)
+                if let Err(err) = self.player.seek(pos_ms / 1000)
                 {
                     self.printer
                         .event("audio_error", json!({ "error": err, "track_id": track.track_id }));
@@ -1459,7 +1459,7 @@ impl AudioPlayback
         &self,
         track: QueueItem,
         next_track: Option<QueueItem>,
-        position_ms: u64,
+        position_ms: Option<u64>,
         quality: Quality,
     )
     {
@@ -1505,9 +1505,9 @@ impl AudioPlayback
                 {
                     Ok(()) =>
                     {
-                        if position_ms > 0
+                        if let Some(pos_ms) = position_ms
                         {
-                            if let Err(err) = player.seek(position_ms / 1000)
+                            if let Err(err) = player.seek(pos_ms / 1000)
                             {
                                 printer.event(
                                     "audio_error",
@@ -1785,7 +1785,7 @@ enum AudioAction
     {
         track: QueueItem,
         next_track: Option<QueueItem>,
-        position_ms: u64,
+        position_ms: Option<u64>,
         max_audio_quality: i32,
     },
     Resume,
@@ -1941,7 +1941,7 @@ impl CliEventSink
                             Some(AudioAction::Play {
                                 track,
                                 next_track: playback.next_track.clone(),
-                                position_ms: playback.current_position_ms,
+                                position_ms: *current_position_ms,
                                 max_audio_quality: playback.max_audio_quality,
                             })
                         }
@@ -1952,7 +1952,7 @@ impl CliEventSink
                     }
                     Some(PLAYING_STATE_PAUSED) => Some(AudioAction::Pause),
                     Some(PLAYING_STATE_STOPPED) => Some(AudioAction::Stop),
-                    _ => current_position_ms.map(AudioAction::Seek),
+                    _ => (*current_position_ms).map(AudioAction::Seek),
                 }
             }
             RendererCommand::SetVolume {
