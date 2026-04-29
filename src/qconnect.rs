@@ -224,6 +224,7 @@ impl QconnectClient
 
         spawn_transport_event_loop(
             Arc::clone(&app),
+            Arc::clone(&sink),
             transport_rx,
             printer.clone(),
             device_name.clone(),
@@ -289,34 +290,55 @@ impl QconnectClient
             loop
             {
                 tokio::time::sleep(interval).await;
-                let queue_version = app.queue_state_snapshot().await.version;
+                let queue = app.queue_state_snapshot().await;
+                let queue_version = queue.version;
                 let playback = sink.playback_snapshot().await;
                 let renderer = app.renderer_state_snapshot().await;
-                let report_current_track = report_current_track(&renderer, playback.track_id);
+                let report_current_track = playback
+                    .queue_item_id
+                    .and_then(|queue_item_id| queue_item_by_id(&queue, queue_item_id))
+                    .or_else(|| report_current_track(&renderer, playback.track_id));
+                let report_next_track = report_current_track
+                    .as_ref()
+                    .and_then(|track| adjacent_queue_item_in(&queue, track.queue_item_id, 1));
+
+                if playback.track_id.is_some() && report_current_track.is_none()
+                {
+                    // Skip reporting if the hardware is playing a track that the server hasn't
+                    // acknowledged yet (neither current nor next). Reporting the old track
+                    // with the new track's position would cause the state to "bounce" on controllers.
+                    continue;
+                }
+
                 if playback.finished
                 {
-                    let current_queue_item_id = report_current_track
+                    if let Some(current_queue_item_id) = report_current_track
                         .as_ref()
-                        .map(|track| track.queue_item_id);
-                    if current_queue_item_id.is_some()
-                        && current_queue_item_id != advanced_from_queue_item_id
+                        .map(|track| track.queue_item_id)
                     {
-                        advanced_from_queue_item_id = current_queue_item_id;
-                        let target = adjacent_queue_item(&app, 1).await;
-                        if target.is_some()
+                        if Some(current_queue_item_id) != advanced_from_queue_item_id
                         {
-                            if let Err(err) =
-                                send_mpris_player_state(&app, PLAYING_STATE_PLAYING, target).await
+                            advanced_from_queue_item_id = Some(current_queue_item_id);
+                            let target =
+                                adjacent_queue_item_from(&app, current_queue_item_id, 1).await;
+                            if let Some(target) = target
                             {
-                                log::debug!("automatic next-track command failed: {err}");
+                                let next_track =
+                                    adjacent_queue_item_in(&queue, target.queue_item_id, 1);
+                                sink.play_local_track(target, next_track).await;
+                                continue;
                             }
-                            continue;
                         }
                     }
                 }
                 else if playback.playing_state == PLAYING_STATE_PLAYING
                 {
                     advanced_from_queue_item_id = None;
+                }
+
+                if playback.playing_state == PLAYING_STATE_PLAYING && !playback.finished
+                {
+                    sink.ensure_preloaded(report_next_track.clone()).await;
                 }
 
                 let payload = json!({
@@ -327,8 +349,7 @@ impl QconnectClient
                     "current_queue_item_id": report_current_track
                         .as_ref()
                         .and_then(|track| i32::try_from(track.queue_item_id).ok()),
-                    "next_queue_item_id": renderer
-                        .next_track
+                    "next_queue_item_id": report_next_track
                         .as_ref()
                         .and_then(|track| i32::try_from(track.queue_item_id).ok()),
                     "queue_version": {
@@ -353,6 +374,7 @@ impl QconnectClient
 
 fn spawn_transport_event_loop(
     app: Arc<App>,
+    sink: Arc<CliEventSink>,
     mut transport_rx: broadcast::Receiver<TransportEvent>,
     printer: Printer,
     device_name: String,
@@ -370,6 +392,49 @@ fn spawn_transport_event_loop(
             {
                 Ok(event) =>
                 {
+                    if enable_renderer
+                    {
+                        if let TransportEvent::InboundQueueServerEvent(evt) = &event
+                        {
+                            let message_type = evt.message_type();
+                            if message_type == "MESSAGE_TYPE_SRVR_CTRL_RENDERER_STATE_UPDATED"
+                                || message_type == "MESSAGE_TYPE_SRVR_CTRL_SET_PLAYER_STATE"
+                            {
+                                if let Some(payload_pos) =
+                                    evt.payload.get("current_position").and_then(Value::as_u64)
+                                {
+                                    let snapshot = sink.playback_snapshot().await;
+                                    if snapshot.track_id.is_some()
+                                    {
+                                        let diff =
+                                            payload_pos.abs_diff(snapshot.current_position_ms);
+                                        if diff > 3000
+                                        {
+                                            let playing_state = evt
+                                                .payload
+                                                .get("playing_state")
+                                                .and_then(Value::as_i64)
+                                                .map(|v| v as i32);
+                                            let command = RendererCommand::SetState {
+                                                playing_state,
+                                                current_position_ms: Some(payload_pos),
+                                                current_track: None,
+                                                next_track: None,
+                                            };
+                                            sink.apply_renderer_command(&command).await;
+                                            printer.event(
+                                                "renderer_command",
+                                                json!({
+                                                    "command": format!("Intercepted Seek: {command:?}")
+                                                }),
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
                     let session_uuid = match &event
                     {
                         TransportEvent::InboundQueueServerEvent(evt)
@@ -1254,17 +1319,44 @@ async fn adjacent_queue_item(app: &Arc<App>, direction: i32) -> Option<QueueItem
 {
     let renderer = app.renderer_state_snapshot().await;
     let current = renderer.current_track?;
+    adjacent_queue_item_from(app, current.queue_item_id, direction).await
+}
+
+async fn adjacent_queue_item_from(
+    app: &Arc<App>,
+    current_queue_item_id: u64,
+    direction: i32,
+) -> Option<QueueItem>
+{
     let queue = app.queue_state_snapshot().await;
+    adjacent_queue_item_in(&queue, current_queue_item_id, direction)
+}
+
+fn adjacent_queue_item_in(
+    queue: &QConnectQueueState,
+    current_queue_item_id: u64,
+    direction: i32,
+) -> Option<QueueItem>
+{
     let ordered = ordered_queue_items(&queue);
     let current_index = ordered
         .iter()
-        .position(|item| item.queue_item_id == current.queue_item_id)?;
+        .position(|item| item.queue_item_id == current_queue_item_id)?;
     let next_index = current_index as i32 + direction;
     if next_index < 0
     {
         return None;
     }
     ordered.get(next_index as usize).cloned()
+}
+
+fn queue_item_by_id(queue: &QConnectQueueState, queue_item_id: u64) -> Option<QueueItem>
+{
+    queue
+        .queue_items
+        .iter()
+        .find(|item| item.queue_item_id == queue_item_id)
+        .cloned()
 }
 
 fn ordered_queue_items(queue: &QConnectQueueState) -> Vec<QueueItem>
@@ -1339,14 +1431,23 @@ fn report_current_track(
 {
     match player_track_id
     {
-        Some(track_id)
-            if renderer
-                .next_track
-                .as_ref()
-                .map(|track| track.track_id == track_id)
-                .unwrap_or(false) =>
+        Some(track_id) =>
         {
-            renderer.next_track.clone()
+            if let Some(current) = &renderer.current_track
+            {
+                if current.track_id == track_id
+                {
+                    return Some(current.clone());
+                }
+            }
+            if let Some(next) = &renderer.next_track
+            {
+                if next.track_id == track_id
+                {
+                    return Some(next.clone());
+                }
+            }
+            None
         }
         _ => renderer.current_track.clone(),
     }
@@ -1360,6 +1461,7 @@ struct AudioPlayback
     preferred_quality: Quality,
     loading: Mutex<Option<JoinHandle<()>>>,
     preloading: Arc<Mutex<Option<JoinHandle<()>>>>,
+    preloaded_track_id: Arc<Mutex<Option<u64>>>,
     mpris: Option<Arc<StdMutex<MediaControls>>>,
     control_sender: Option<mpsc::UnboundedSender<MprisCommand>>,
 }
@@ -1416,6 +1518,7 @@ impl AudioPlayback
             preferred_quality: options.audio_quality,
             loading: Mutex::new(None),
             preloading: Arc::new(Mutex::new(None)),
+            preloaded_track_id: Arc::new(Mutex::new(None)),
             mpris,
             control_sender: mpris_sender,
         }))
@@ -1437,10 +1540,16 @@ impl AudioPlayback
         {
             if let Some(pos_ms) = position_ms
             {
-                if let Err(err) = self.player.seek(pos_ms / 1000)
+                let current_pos_ms = current.position.saturating_mul(1000);
+                if pos_ms.abs_diff(current_pos_ms) > 3000
                 {
-                    self.printer
-                        .event("audio_error", json!({ "error": err, "track_id": track.track_id }));
+                    if let Err(err) = self.player.seek(pos_ms / 1000)
+                    {
+                        self.printer.event(
+                            "audio_error",
+                            json!({ "error": err, "track_id": track.track_id }),
+                        );
+                    }
                 }
             }
             if let Err(err) = self.player.resume()
@@ -1448,11 +1557,96 @@ impl AudioPlayback
                 self.printer
                     .event("audio_error", json!({ "error": err, "track_id": track.track_id }));
             }
+
+            if let Some(next_track) = next_track
+            {
+                self.ensure_preloaded(next_track, max_audio_quality).await;
+            }
             return;
         }
 
         self.replace_loading_task(track, next_track, position_ms, quality)
             .await;
+    }
+
+    async fn ensure_preloaded(&self, next_track: QueueItem, max_audio_quality: i32)
+    {
+        let remote_max_quality =
+            connect_quality_to_qobuz(max_audio_quality).unwrap_or(self.preferred_quality);
+        let quality = lower_quality(self.preferred_quality, remote_max_quality);
+        let mut preloaded = self.preloaded_track_id.lock().await;
+        if *preloaded == Some(next_track.track_id)
+        {
+            return;
+        }
+        *preloaded = Some(next_track.track_id);
+        drop(preloaded);
+        self.spawn_preload_task(next_track, quality).await;
+    }
+
+    async fn spawn_preload_task(&self, next_track: QueueItem, quality: Quality)
+    {
+        if let Some(handle) = self.preloading.lock().await.take()
+        {
+            handle.abort();
+        }
+
+        let prefetch_player = Arc::clone(&self.player);
+        let prefetch_client = self.client.clone();
+        let prefetch_printer = self.printer.clone();
+        let preloading = Arc::clone(&self.preloading);
+        let preloaded_track_id = Arc::clone(&self.preloaded_track_id);
+        let track_id = next_track.track_id;
+        let prefetch_handle = tokio::spawn(async move {
+            prefetch_printer.event(
+                "audio_preloading",
+                json!({
+                    "track_id": next_track.track_id,
+                    "queue_item_id": next_track.queue_item_id,
+                    "quality": quality.label()
+                }),
+            );
+            let mut preload_failed = false;
+            match cmaf_download_full(&prefetch_client, next_track.track_id, quality).await
+            {
+                Ok(audio_data) => match prefetch_player.play_next(audio_data, next_track.track_id)
+                {
+                    Ok(()) => prefetch_printer
+                        .event("audio_preloaded", json!({ "track_id": next_track.track_id })),
+                    Err(err) =>
+                    {
+                        preload_failed = true;
+                        prefetch_printer.event(
+                            "audio_preload_error",
+                            json!({
+                                "error": err,
+                                "track_id": next_track.track_id
+                            }),
+                        );
+                    }
+                },
+                Err(err) =>
+                {
+                    preload_failed = true;
+                    prefetch_printer.event(
+                        "audio_preload_error",
+                        json!({
+                            "error": err,
+                            "track_id": next_track.track_id
+                        }),
+                    );
+                }
+            }
+            if preload_failed
+            {
+                let mut preloaded = preloaded_track_id.lock().await;
+                if *preloaded == Some(track_id)
+                {
+                    *preloaded = None;
+                }
+            }
+        });
+        *preloading.lock().await = Some(prefetch_handle);
     }
 
     async fn replace_loading_task(
@@ -1471,6 +1665,7 @@ impl AudioPlayback
         {
             handle.abort();
         }
+        *self.preloaded_track_id.lock().await = None;
 
         let player = Arc::clone(&self.player);
         let client = self.client.clone();
@@ -1478,6 +1673,7 @@ impl AudioPlayback
         let mpris = self.mpris.clone();
         let control_sender = self.control_sender.clone();
         let preloading = Arc::clone(&self.preloading);
+        let preloaded_track_id = Arc::clone(&self.preloaded_track_id);
         let track_id = track.track_id;
         let handle = tokio::spawn(async move {
             printer.event(
@@ -1518,9 +1714,12 @@ impl AudioPlayback
                         printer.event("audio_started", json!({ "track_id": track_id }));
                         if let Some(next_track) = next_track
                         {
+                            *preloaded_track_id.lock().await = Some(next_track.track_id);
                             let prefetch_player = Arc::clone(&player);
                             let prefetch_client = client.clone();
                             let prefetch_printer = printer.clone();
+                            let preloaded_track_id_for_task = Arc::clone(&preloaded_track_id);
+                            let preload_track_id = next_track.track_id;
                             let prefetch_handle = tokio::spawn(async move {
                                 prefetch_printer.event(
                                     "audio_preloading",
@@ -1530,6 +1729,7 @@ impl AudioPlayback
                                         "quality": quality.label()
                                     }),
                                 );
+                                let mut preload_failed = false;
                                 match cmaf_download_full(
                                     &prefetch_client,
                                     next_track.track_id,
@@ -1546,22 +1746,38 @@ impl AudioPlayback
                                                 "audio_preloaded",
                                                 json!({ "track_id": next_track.track_id }),
                                             ),
-                                            Err(err) => prefetch_printer.event(
-                                                "audio_preload_error",
-                                                json!({
-                                                    "error": err,
-                                                    "track_id": next_track.track_id
-                                                }),
-                                            ),
+                                            Err(err) =>
+                                            {
+                                                preload_failed = true;
+                                                prefetch_printer.event(
+                                                    "audio_preload_error",
+                                                    json!({
+                                                        "error": err,
+                                                        "track_id": next_track.track_id
+                                                    }),
+                                                );
+                                            }
                                         }
                                     }
-                                    Err(err) => prefetch_printer.event(
-                                        "audio_preload_error",
-                                        json!({
-                                            "error": err,
-                                            "track_id": next_track.track_id
-                                        }),
-                                    ),
+                                    Err(err) =>
+                                    {
+                                        preload_failed = true;
+                                        prefetch_printer.event(
+                                            "audio_preload_error",
+                                            json!({
+                                                "error": err,
+                                                "track_id": next_track.track_id
+                                            }),
+                                        );
+                                    }
+                                }
+                                if preload_failed
+                                {
+                                    let mut preloaded = preloaded_track_id_for_task.lock().await;
+                                    if *preloaded == Some(preload_track_id)
+                                    {
+                                        *preloaded = None;
+                                    }
                                 }
                             });
                             *preloading.lock().await = Some(prefetch_handle);
@@ -1655,7 +1871,23 @@ impl AudioPlayback
         }
     }
 
-    fn snapshot(&self, fallback: &PlaybackState) -> PlaybackSnapshot
+    fn update_mpris_metadata_for_track(&self, track_id: u64)
+    {
+        let Some(mpris) = self.mpris.clone()
+        else
+        {
+            return;
+        };
+        let client = self.client.clone();
+        tokio::spawn(async move {
+            if let Ok(track) = client.get_track(track_id).await
+            {
+                update_mpris_metadata(&mpris, &track);
+            }
+        });
+    }
+
+    fn snapshot(&self, fallback: &mut PlaybackState) -> PlaybackSnapshot
     {
         let event = self.player.get_playback_event();
         if event.track_id == 0
@@ -1672,17 +1904,19 @@ impl AudioPlayback
             return snapshot;
         }
 
-        let event_matches_current_track = fallback
+        let event_queue_item = fallback
             .current_track
             .as_ref()
-            .map(|track| track.track_id == event.track_id)
-            .unwrap_or(false);
-        let event_matches_next_track = fallback
-            .next_track
-            .as_ref()
-            .map(|track| track.track_id == event.track_id)
-            .unwrap_or(false);
-        if !event_matches_current_track && !event_matches_next_track
+            .filter(|track| track.track_id == event.track_id)
+            .or_else(|| {
+                fallback
+                    .next_track
+                    .as_ref()
+                    .filter(|track| track.track_id == event.track_id)
+            })
+            .cloned();
+
+        if event_queue_item.is_none()
         {
             let snapshot = fallback.snapshot();
             if let Some(mpris) = &self.mpris
@@ -1696,28 +1930,58 @@ impl AudioPlayback
             return snapshot;
         }
 
-        let finished = event_matches_current_track
-            && !event.is_playing
+        let event_queue_item = event_queue_item.expect("checked above");
+        let promoted_track = fallback
+            .current_track
+            .as_ref()
+            .map(|track| track.queue_item_id != event_queue_item.queue_item_id)
+            .unwrap_or(true);
+        if promoted_track
+        {
+            fallback.current_track = Some(event_queue_item.clone());
+            if fallback
+                .next_track
+                .as_ref()
+                .map(|track| track.queue_item_id == event_queue_item.queue_item_id)
+                .unwrap_or(false)
+            {
+                fallback.next_track = None;
+            }
+            fallback.current_position_ms = event.position.saturating_mul(1000);
+            fallback.duration_ms = event.duration.saturating_mul(1000);
+            fallback.updated_at = Instant::now();
+            self.update_mpris_metadata_for_track(event.track_id);
+        }
+
+        let finished = !event.is_playing
             && fallback.playing_state == PLAYING_STATE_PLAYING
             && event.duration > 0
             && event.position >= event.duration;
+
+        let playing_state = if event.is_playing
+        {
+            PLAYING_STATE_PLAYING
+        }
+        else if finished
+        {
+            PLAYING_STATE_STOPPED
+        }
+        else
+        {
+            fallback.playing_state
+        };
+        fallback.playing_state = playing_state;
+        fallback.current_position_ms = event.position.saturating_mul(1000);
+        fallback.duration_ms = event.duration.saturating_mul(1000);
+        fallback.updated_at = Instant::now();
+
         let snapshot = PlaybackSnapshot {
-            playing_state: if event.is_playing
-            {
-                PLAYING_STATE_PLAYING
-            }
-            else if finished
-            {
-                PLAYING_STATE_STOPPED
-            }
-            else
-            {
-                fallback.playing_state
-            },
+            playing_state,
             current_position_ms: event.position.saturating_mul(1000),
             duration_ms: event.duration.saturating_mul(1000),
             finished,
             track_id: Some(event.track_id),
+            queue_item_id: Some(event_queue_item.queue_item_id),
         };
         if let Some(mpris) = &self.mpris
         {
@@ -1761,7 +2025,6 @@ fn quality_rank(quality: Quality) -> u8
         Quality::UltraHiRes => 4,
     }
 }
-
 async fn play_track_via_cmaf(
     player: &Player,
     client: &QobuzClient,
@@ -1791,7 +2054,6 @@ enum AudioAction
     Resume,
     Pause,
     Stop,
-    Seek(u64),
     Volume
     {
         volume: i32,
@@ -1819,12 +2081,49 @@ impl CliEventSink
 
     async fn playback_snapshot(&self) -> PlaybackSnapshot
     {
-        let playback = self.playback.lock().await;
+        let mut playback = self.playback.lock().await;
         match &self.audio
         {
-            Some(audio) => audio.snapshot(&playback),
+            Some(audio) => audio.snapshot(&mut playback),
             None => playback.snapshot(),
         }
+    }
+
+    async fn ensure_preloaded(&self, next_track: Option<QueueItem>)
+    {
+        let Some(audio) = &self.audio
+        else
+        {
+            return;
+        };
+        let Some(next_track) = next_track
+        else
+        {
+            return;
+        };
+        let max_audio_quality = {
+            let mut playback = self.playback.lock().await;
+            playback.next_track = Some(next_track.clone());
+            playback.max_audio_quality
+        };
+        audio.ensure_preloaded(next_track, max_audio_quality).await;
+    }
+
+    async fn play_local_track(&self, current_track: QueueItem, next_track: Option<QueueItem>)
+    {
+        let command = RendererCommand::SetState {
+            playing_state: Some(PLAYING_STATE_PLAYING),
+            current_position_ms: Some(0),
+            current_track: Some(current_track),
+            next_track,
+        };
+        self.apply_renderer_command(&command).await;
+        self.printer.event(
+            "renderer_command",
+            json!({
+                "command": format!("Local Advance: {command:?}")
+            }),
+        );
     }
 }
 
@@ -1877,6 +2176,14 @@ impl QconnectEventSink for CliEventSink
                 payload,
             } =>
             {
+                if message_type == "MESSAGE_TYPE_SRVR_CTRL_REMOVE_RENDERER"
+                {
+                    log::warn!("Renderer removed by server. Attempting to re-join...");
+                    // We can't easily access device info here, but we can trigger a re-bootstrap
+                    // by setting renderer_joined to false if we had access to the loop state.
+                    // For now, just log it and rely on the fact that deferred_renderer_join
+                    // might be triggered by the next SESSION_STATE message.
+                }
                 self.printer.event(
                     "session_event",
                     json!({
@@ -1906,6 +2213,7 @@ impl CliEventSink
     async fn apply_renderer_command(&self, command: &RendererCommand)
     {
         let mut playback = self.playback.lock().await;
+        let mut seek_to = None;
         let action = match command
         {
             RendererCommand::SetState {
@@ -1922,6 +2230,12 @@ impl CliEventSink
                 if let Some(value) = current_position_ms
                 {
                     playback.current_position_ms = *value;
+                    // Only seek if it's not a seek to 0 (which is usually handled by track transition)
+                    // or if the position is significantly different.
+                    if *value > 0
+                    {
+                        seek_to = Some(*value);
+                    }
                 }
                 if let Some(track) = current_track
                 {
@@ -1932,16 +2246,20 @@ impl CliEventSink
                     playback.next_track = Some(track.clone());
                 }
                 playback.updated_at = Instant::now();
-                match playing_state
+
+                let state = playing_state.unwrap_or(playback.playing_state);
+                match state
                 {
-                    Some(PLAYING_STATE_PLAYING) =>
+                    PLAYING_STATE_PLAYING =>
                     {
                         if let Some(track) = playback.current_track.clone()
                         {
+                            seek_to = None; // Handled by Play action
                             Some(AudioAction::Play {
                                 track,
                                 next_track: playback.next_track.clone(),
-                                position_ms: *current_position_ms,
+                                position_ms: current_position_ms
+                                    .or(Some(playback.current_position_ms)),
                                 max_audio_quality: playback.max_audio_quality,
                             })
                         }
@@ -1950,9 +2268,9 @@ impl CliEventSink
                             Some(AudioAction::Resume)
                         }
                     }
-                    Some(PLAYING_STATE_PAUSED) => Some(AudioAction::Pause),
-                    Some(PLAYING_STATE_STOPPED) => Some(AudioAction::Stop),
-                    _ => (*current_position_ms).map(AudioAction::Seek),
+                    PLAYING_STATE_PAUSED => Some(AudioAction::Pause),
+                    PLAYING_STATE_STOPPED => Some(AudioAction::Stop),
+                    _ => None,
                 }
             }
             RendererCommand::SetVolume {
@@ -1994,6 +2312,11 @@ impl CliEventSink
 
         if let Some(audio) = &self.audio
         {
+            if let Some(pos) = seek_to
+            {
+                audio.seek(pos).await;
+            }
+
             match action
             {
                 Some(AudioAction::Play {
@@ -2010,7 +2333,6 @@ impl CliEventSink
                 Some(AudioAction::Resume) => audio.resume().await,
                 Some(AudioAction::Pause) => audio.pause().await,
                 Some(AudioAction::Stop) => audio.stop().await,
-                Some(AudioAction::Seek(position_ms)) => audio.seek(position_ms).await,
                 Some(AudioAction::Volume { volume, muted }) =>
                 {
                     audio.set_volume(volume, muted).await
@@ -2072,6 +2394,7 @@ impl PlaybackState
             duration_ms: self.duration_ms,
             finished: false,
             track_id: self.current_track.as_ref().map(|track| track.track_id),
+            queue_item_id: self.current_track.as_ref().map(|track| track.queue_item_id),
         }
     }
 }
@@ -2084,6 +2407,7 @@ struct PlaybackSnapshot
     duration_ms: u64,
     finished: bool,
     track_id: Option<u64>,
+    queue_item_id: Option<u64>,
 }
 
 #[allow(dead_code)]
