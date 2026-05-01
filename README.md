@@ -9,6 +9,31 @@ Standalone Qobuz Connect CLI client built on the `qconnect-*` Rust crates from
 cargo install --git https://github.com/ahcm/qconnect
 ```
 
+## Linux Audio Builds
+
+For local audio playback on Linux, prefer a normal glibc/dynamically linked
+build made on a compatible distro:
+
+```sh
+cargo build --release
+```
+
+Avoid shipping Alpine/musl/static binaries as general-purpose audio builds.
+ALSA often resolves the default device through runtime-loaded modules such as
+PulseAudio/PipeWire config plugins. Static musl builds can link `libasound` but
+still fail at runtime with messages like `Dynamic loading not supported` or
+`Unknown PCM default` when those ALSA modules cannot be loaded on the target
+system.
+
+Musl/static builds are still reasonable for state/control use:
+
+```sh
+qconnect serve --no-audio
+```
+
+For audio on a target host, use `qconnect audio-devices` and run a glibc build
+with a listed backend/device id when needed.
+
 ## Credentials
 
 The easiest setup on a desktop machine is browser OAuth:
@@ -60,9 +85,21 @@ Run as a headless Qobuz Connect renderer:
 qconnect --device-name 'qconnect cli' serve
 ```
 
-This makes the process visible to other Qobuz Connect controllers and prints
-remote renderer commands. It reports synthetic playback state but does not play
-audio.
+This makes the process visible to other Qobuz Connect controllers and plays
+audio locally. Use `serve --no-audio` for state-only rendering.
+
+List Linux audio backend/device ids:
+
+```sh
+qconnect audio-devices
+qconnect audio-devices --audio-backend alsa
+```
+
+Select a backend/device explicitly:
+
+```sh
+qconnect serve --audio-backend alsa --audio-device hw:0,0
+```
 
 Inspect state:
 
