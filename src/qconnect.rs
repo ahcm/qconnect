@@ -179,7 +179,11 @@ impl QconnectClient
         let device_name = resolve_device_name(options.device_name.as_deref());
         let device_uuid = resolve_device_uuid(options.device_uuid.as_deref())?;
         let printer = Printer::new(options.json);
-        let config = resolve_transport_config(&options).await?;
+        let mut config = resolve_transport_config(&options).await?;
+        if enable_renderer
+        {
+            config.reconnect_max_attempts = None;
+        }
         let (mpris_tx, mpris_rx) = if options.enable_mpris
         {
             let (tx, rx) = mpsc::unbounded_channel();
@@ -502,6 +506,19 @@ fn spawn_transport_event_loop(
                                     "attempt": attempt,
                                     "backoff_ms": backoff_ms,
                                     "reason": reason
+                                }),
+                            );
+                        }
+                        TransportEvent::MaxReconnectAttemptsExceeded {
+                            attempts,
+                            last_reason,
+                        } =>
+                        {
+                            printer.event(
+                                "transport_reconnect_exhausted",
+                                json!({
+                                    "attempts": attempts,
+                                    "last_reason": last_reason
                                 }),
                             );
                         }
@@ -1258,6 +1275,17 @@ fn spawn_mpris_command_loop(
         {
             if let Err(err) = handle_mpris_command(&app, command).await
             {
+                if is_transport_task_closed_error(&err)
+                {
+                    printer.event(
+                        "mpris_transport_closed",
+                        json!({
+                            "command": format!("{command:?}"),
+                            "error": err.to_string()
+                        }),
+                    );
+                    break;
+                }
                 printer.event(
                     "mpris_command_error",
                     json!({
@@ -1268,6 +1296,12 @@ fn spawn_mpris_command_loop(
             }
         }
     });
+}
+
+fn is_transport_task_closed_error(err: &anyhow::Error) -> bool
+{
+    err.chain()
+        .any(|cause| cause.to_string() == "transport task channel is closed")
 }
 
 async fn handle_mpris_command(app: &Arc<App>, command: MprisCommand) -> Result<()>
