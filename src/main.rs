@@ -4,6 +4,7 @@ use std::{fmt, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use qbz_audio::{AudioBackendType, BackendManager};
 use qbz_models::Quality;
 use qconnect::{ClientOptions, QconnectClient};
 use qconnect_app::QueueCommandType;
@@ -107,6 +108,13 @@ enum Command
         #[arg(long)]
         no_browser: bool,
     },
+    /// List audio backends and output device ids.
+    AudioDevices
+    {
+        /// Audio backend to inspect.
+        #[arg(long, env = "QCONNECT_AUDIO_BACKEND", value_enum)]
+        audio_backend: Option<AudioBackendChoice>,
+    },
     /// Join Qobuz Connect and expose this process as a headless renderer.
     Serve
     {
@@ -116,9 +124,12 @@ enum Command
         /// Disable local audio output while still advertising a renderer.
         #[arg(long)]
         no_audio: bool,
-        /// Output device name for local audio playback.
+        /// Output device name or backend-specific id for local audio playback.
         #[arg(long, env = "QCONNECT_AUDIO_DEVICE")]
         audio_device: Option<String>,
+        /// Audio backend for local playback.
+        #[arg(long, env = "QCONNECT_AUDIO_BACKEND", value_enum)]
+        audio_backend: Option<AudioBackendChoice>,
         /// Preferred Qobuz playback quality.
         #[arg(long, default_value_t = PlaybackQuality::UltraHiRes)]
         audio_quality: PlaybackQuality,
@@ -243,6 +254,31 @@ enum PlaybackQuality
     UltraHiRes,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum AudioBackendChoice
+{
+    Auto,
+    Pipewire,
+    Alsa,
+    Pulse,
+    SystemDefault,
+}
+
+impl AudioBackendChoice
+{
+    fn explicit_backend(self) -> Option<AudioBackendType>
+    {
+        match self
+        {
+            AudioBackendChoice::Auto => None,
+            AudioBackendChoice::Pipewire => Some(AudioBackendType::PipeWire),
+            AudioBackendChoice::Alsa => Some(AudioBackendType::Alsa),
+            AudioBackendChoice::Pulse => Some(AudioBackendType::Pulse),
+            AudioBackendChoice::SystemDefault => Some(AudioBackendType::SystemDefault),
+        }
+    }
+}
+
 impl PlaybackQuality
 {
     fn to_qobuz_quality(self) -> Quality
@@ -275,6 +311,7 @@ impl fmt::Display for PlaybackQuality
 #[tokio::main]
 async fn main() -> Result<()>
 {
+    install_rustls_crypto_provider();
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let cli = Cli::parse();
@@ -321,23 +358,32 @@ async fn main() -> Result<()>
         return Ok(());
     }
 
-    let (enable_renderer, enable_audio, enable_mpris, audio_device, audio_quality) = match &command
+    if let Command::AudioDevices { audio_backend } = &command
     {
-        Command::Serve {
-            no_audio,
-            no_mpris,
-            audio_device,
-            audio_quality,
-            ..
-        } => (
-            true,
-            !*no_audio,
-            !*no_audio && !*no_mpris,
-            audio_device.clone(),
-            audio_quality.to_qobuz_quality(),
-        ),
-        _ => (false, false, false, None, Quality::Lossless),
-    };
+        list_audio_devices(*audio_backend)?;
+        return Ok(());
+    }
+
+    let (enable_renderer, enable_audio, enable_mpris, audio_device, audio_backend, audio_quality) =
+        match &command
+        {
+            Command::Serve {
+                no_audio,
+                no_mpris,
+                audio_device,
+                audio_quality,
+                audio_backend,
+                ..
+            } => (
+                true,
+                !*no_audio,
+                !*no_audio && !*no_mpris,
+                audio_device.clone(),
+                select_audio_backend(*audio_backend),
+                audio_quality.to_qobuz_quality(),
+            ),
+            _ => (false, false, false, None, None, Quality::Lossless),
+        };
     let wait_after_connect = wait_secs_for(&command);
 
     let options = ClientOptions {
@@ -374,6 +420,7 @@ async fn main() -> Result<()>
         qcloud_proto: cli.qcloud_proto,
         json: cli.json,
         audio_device,
+        audio_backend,
         audio_quality,
         enable_mpris,
     };
@@ -387,6 +434,10 @@ async fn main() -> Result<()>
     match command
     {
         Command::Login { .. } => unreachable!("login is handled before Connect startup"),
+        Command::AudioDevices { .. } =>
+        {
+            unreachable!("audio-devices is handled before Connect startup")
+        }
         Command::Serve {
             report_interval_secs,
             ..
@@ -647,11 +698,125 @@ fn first_non_empty(values: impl IntoIterator<Item = Option<String>>) -> Option<S
         .find(|value| !value.is_empty())
 }
 
+fn list_audio_devices(choice: Option<AudioBackendChoice>) -> Result<()>
+{
+    let backends = match choice.and_then(AudioBackendChoice::explicit_backend)
+    {
+        Some(backend) => vec![backend],
+        None => BackendManager::available_backends(),
+    };
+
+    if backends.is_empty()
+    {
+        println!("No audio backends available");
+        return Ok(());
+    }
+
+    for backend_type in backends
+    {
+        println!("backend: {}", audio_backend_name(backend_type));
+        let backend = match BackendManager::create_backend(backend_type)
+        {
+            Ok(backend) => backend,
+            Err(err) =>
+            {
+                println!("  unavailable: {err}");
+                continue;
+            }
+        };
+        if !backend.is_available()
+        {
+            println!("  unavailable");
+            continue;
+        }
+
+        let devices = match backend.enumerate_devices()
+        {
+            Ok(devices) => devices,
+            Err(err) =>
+            {
+                println!("  failed to enumerate devices: {err}");
+                continue;
+            }
+        };
+        if devices.is_empty()
+        {
+            println!("  no output devices");
+            continue;
+        }
+
+        for device in devices
+        {
+            let default_marker = if device.is_default { " (default)" } else { "" };
+            println!("  id: {}{}", device.id, default_marker);
+            println!("    name: {}", device.name);
+            if let Some(description) = device.description
+            {
+                println!("    description: {description}");
+            }
+            if let Some(max_sample_rate) = device.max_sample_rate
+            {
+                println!("    max_sample_rate: {max_sample_rate}");
+            }
+            if let Some(rates) = device.supported_sample_rates
+            {
+                println!("    sample_rates: {:?}", rates);
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn select_audio_backend(choice: Option<AudioBackendChoice>) -> Option<AudioBackendType>
+{
+    choice
+        .and_then(AudioBackendChoice::explicit_backend)
+        .or_else(default_audio_backend)
+}
+
+fn default_audio_backend() -> Option<AudioBackendType>
+{
+    #[cfg(target_os = "linux")]
+    {
+        let available = BackendManager::available_backends();
+        [
+            AudioBackendType::PipeWire,
+            AudioBackendType::Pulse,
+            AudioBackendType::Alsa,
+        ]
+        .into_iter()
+        .find(|backend| available.contains(backend))
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        Some(AudioBackendType::SystemDefault)
+    }
+}
+
+fn audio_backend_name(backend: AudioBackendType) -> &'static str
+{
+    match backend
+    {
+        AudioBackendType::PipeWire => "pipewire",
+        AudioBackendType::Alsa => "alsa",
+        AudioBackendType::Pulse => "pulse",
+        AudioBackendType::SystemDefault => "system-default",
+    }
+}
+
+fn install_rustls_crypto_provider()
+{
+    let _ = rustls::crypto::ring::default_provider().install_default();
+}
+
 fn wait_secs_for(command: &Command) -> u64
 {
     match command
     {
         Command::Login { .. } => 0,
+        Command::AudioDevices { .. } => 0,
         Command::Serve { .. } => 0,
         Command::Status { wait_secs }
         | Command::Queue { wait_secs }
@@ -690,4 +855,20 @@ fn random_u32() -> u32
 {
     let bytes = *Uuid::new_v4().as_bytes();
     u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])
+}
+
+#[cfg(test)]
+mod tests
+{
+    use super::*;
+
+    #[test]
+    fn installs_rustls_provider_for_reqwest()
+    {
+        install_rustls_crypto_provider();
+
+        reqwest::Client::builder()
+            .build()
+            .expect("build reqwest client");
+    }
 }

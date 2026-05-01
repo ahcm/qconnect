@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
-use qbz_audio::{AudioDiagnostic, AudioSettings};
+use qbz_audio::{AudioBackendType, AudioDiagnostic, AudioSettings};
 use qbz_models::{Quality, Track};
 use qbz_player::Player;
 use qbz_qobuz::{QobuzClient, cmaf_download_full};
@@ -157,6 +157,7 @@ pub struct ClientOptions
     pub qcloud_proto: u32,
     pub json: bool,
     pub audio_device: Option<String>,
+    pub audio_backend: Option<AudioBackendType>,
     pub audio_quality: Quality,
     pub enable_mpris: bool,
 }
@@ -691,6 +692,7 @@ async fn resolve_transport_config(options: &ClientOptions) -> Result<WsTransport
         auto_subscribe: true,
         subscribe_channels,
         qcloud_proto: options.qcloud_proto,
+        ..WsTransportConfig::default()
     })
 }
 
@@ -1493,6 +1495,8 @@ impl AudioPlayback
         let player = Player::new(
             options.audio_device.clone(),
             AudioSettings {
+                output_device: options.audio_device.clone(),
+                backend_type: options.audio_backend,
                 gapless_enabled: true,
                 ..Default::default()
             },
@@ -1507,6 +1511,7 @@ impl AudioPlayback
             "audio_ready",
             json!({
                 "device": options.audio_device,
+                "backend": options.audio_backend.map(audio_backend_name),
                 "quality": options.audio_quality.label()
             }),
         );
@@ -2000,6 +2005,17 @@ fn connect_quality_to_qobuz(max_audio_quality: i32) -> Option<Quality>
         2 => Some(Quality::Lossless),
         3 => Some(Quality::HiRes),
         _ => Some(Quality::UltraHiRes),
+    }
+}
+
+fn audio_backend_name(backend: AudioBackendType) -> &'static str
+{
+    match backend
+    {
+        AudioBackendType::PipeWire => "pipewire",
+        AudioBackendType::Alsa => "alsa",
+        AudioBackendType::Pulse => "pulse",
+        AudioBackendType::SystemDefault => "system-default",
     }
 }
 

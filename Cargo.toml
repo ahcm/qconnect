@@ -12,19 +12,20 @@ repository = "https://github.com/ahcm/qconnect"
 anyhow = "1"
 async-trait = "0.1"
 clap = { version = "4.5", features = ["derive", "env"] }
-dirs = "5"
+dirs = "6"
 env_logger = "0.11"
 hex = "0.4"
 log = "0.4"
 open = "5"
-qconnect-app = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qconnect-app" }
-qconnect-core = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qconnect-core" }
-qconnect-transport-ws = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qconnect-transport-ws" }
-qbz-audio = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qbz-audio" }
-qbz-models = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qbz-models" }
-qbz-player = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qbz-player" }
-qbz-qobuz = { git = "https://github.com/vicrodh/qbz", rev = "dfd8f84afd3e776e3926b79e53734eb34bb9997b", package = "qbz-qobuz" }
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+qconnect-app = { git = "https://github.com/vicrodh/qbz", rev = "79e40d1ec55995cc7f3036557df44e79e7e806cb", package = "qconnect-app" }
+qconnect-core = { git = "https://github.com/vicrodh/qbz", rev = "79e40d1ec55995cc7f3036557df44e79e7e806cb", package = "qconnect-core" }
+qconnect-transport-ws = { git = "https://github.com/vicrodh/qbz", rev = "79e40d1ec55995cc7f3036557df44e79e7e806cb", package = "qconnect-transport-ws" }
+qbz-audio = { git = "https://github.com/vicrodh/qbz", rev = "79e40d1ec55995cc7f3036557df44e79e7e806cb", package = "qbz-audio" }
+qbz-models = { git = "https://github.com/vicrodh/qbz", rev = "79e40d1ec55995cc7f3036557df44e79e7e806cb", package = "qbz-models" }
+qbz-player = { git = "https://github.com/vicrodh/qbz", rev = "79e40d1ec55995cc7f3036557df44e79e7e806cb", package = "qbz-player" }
+qbz-qobuz = { git = "https://github.com/vicrodh/qbz", rev = "79e40d1ec55995cc7f3036557df44e79e7e806cb", package = "qbz-qobuz" }
+reqwest = { version = "0.13", default-features = false, features = ["form", "json", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde_json = "1"
 souvlaki = { version = "0.8", default-features = false, features = ["use_zbus"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "sync", "time"] }
