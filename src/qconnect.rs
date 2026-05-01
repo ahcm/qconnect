@@ -1510,6 +1510,8 @@ impl AudioPlayback
         mpris_sender: Option<mpsc::UnboundedSender<MprisCommand>>,
     ) -> Result<Arc<Self>>
     {
+        warn_if_static_musl_audio(&printer);
+
         let token = options.user_auth_token.as_deref().ok_or_else(|| {
             anyhow!(
                 "audio playback requires --user-auth-token/QOBUZ_USER_AUTH_TOKEN; use serve --no-audio for state-only rendering"
@@ -2052,6 +2054,20 @@ fn audio_backend_name(backend: AudioBackendType) -> &'static str
         AudioBackendType::SystemDefault => "system-default",
     }
 }
+
+#[cfg(all(target_os = "linux", target_env = "musl"))]
+fn warn_if_static_musl_audio(printer: &Printer)
+{
+    printer.event(
+        "audio_warning",
+        json!({
+            "message": "this musl Linux build may not load ALSA runtime plugins; use a glibc/dynamic build for portable audio playback, or run with --no-audio"
+        }),
+    );
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "musl")))]
+fn warn_if_static_musl_audio(_printer: &Printer) {}
 
 fn lower_quality(left: Quality, right: Quality) -> Quality
 {
