@@ -11,11 +11,13 @@ repository = "https://github.com/ahcm/qconnect"
 [dependencies]
 anyhow = "1"
 async-trait = "0.1"
+cacache = "13"
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
 env_logger = "0.11"
 hex = "0.4"
 log = "0.4"
+moka = { version = "0.12", features = ["future"] }
 open = "5"
 qconnect-app = { git = "https://github.com/vicrodh/qbz", rev = "79e40d1ec55995cc7f3036557df44e79e7e806cb", package = "qconnect-app" }
 qconnect-core = { git = "https://github.com/vicrodh/qbz", rev = "79e40d1ec55995cc7f3036557df44e79e7e806cb", package = "qconnect-core" }

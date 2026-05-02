@@ -17,6 +17,8 @@ use qconnect_app::{
 use qconnect_core::QueueItem;
 use qconnect_transport_ws::{NativeWsTransport, TransportEvent, WsTransportConfig};
 use serde_json::{Value, json};
+use moka::future::Cache;
+use cacache;
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
@@ -1489,6 +1491,55 @@ fn report_current_track(
     }
 }
 
+struct TrackCache
+{
+    l1: Cache<String, Vec<u8>>,
+    l2_path: PathBuf,
+}
+
+impl TrackCache
+{
+    fn new(cache_dir: PathBuf) -> Self
+    {
+        let l1 = Cache::builder()
+            .max_capacity(3)
+            .time_to_idle(Duration::from_secs(600))
+            .build();
+        Self {
+            l1,
+            l2_path: cache_dir.join("tracks"),
+        }
+    }
+
+    async fn get(
+        &self,
+        client: &QobuzClient,
+        track_id: u64,
+        quality: Quality,
+    ) -> Result<Vec<u8>, String>
+    {
+        let key = format!("{}_{}", track_id, quality.label());
+
+        if let Some(data) = self.l1.get(&key).await
+        {
+            return Ok(data);
+        }
+
+        if let Ok(data) = cacache::read(&self.l2_path, &key).await
+        {
+            self.l1.insert(key, data.clone()).await;
+            return Ok(data);
+        }
+
+        let data = cmaf_download_full(client, track_id, quality).await?;
+
+        let _ = cacache::write(&self.l2_path, &key, &data).await;
+        self.l1.insert(key, data.clone()).await;
+
+        Ok(data)
+    }
+}
+
 struct AudioPlayback
 {
     client: QobuzClient,
@@ -1497,7 +1548,8 @@ struct AudioPlayback
     preferred_quality: Quality,
     loading: Mutex<Option<JoinHandle<()>>>,
     preloading: Arc<Mutex<Option<JoinHandle<()>>>>,
-    preloaded_track_id: Arc<Mutex<Option<u64>>>,
+    preloading_track_id: Arc<Mutex<Option<u64>>>,
+    cache: Arc<TrackCache>,
     mpris: Option<Arc<StdMutex<MediaControls>>>,
     control_sender: Option<mpsc::UnboundedSender<MprisCommand>>,
 }
@@ -1552,6 +1604,11 @@ impl AudioPlayback
             }),
         );
 
+        let cache_dir = dirs::cache_dir()
+            .unwrap_or_else(|| std::env::temp_dir())
+            .join("qconnect");
+        let cache = Arc::new(TrackCache::new(cache_dir));
+
         Ok(Arc::new(Self {
             client,
             player: Arc::new(player),
@@ -1559,7 +1616,8 @@ impl AudioPlayback
             preferred_quality: options.audio_quality,
             loading: Mutex::new(None),
             preloading: Arc::new(Mutex::new(None)),
-            preloaded_track_id: Arc::new(Mutex::new(None)),
+            preloading_track_id: Arc::new(Mutex::new(None)),
+            cache,
             mpris,
             control_sender: mpris_sender,
         }))
@@ -1615,13 +1673,21 @@ impl AudioPlayback
         let remote_max_quality =
             connect_quality_to_qobuz(max_audio_quality).unwrap_or(self.preferred_quality);
         let quality = lower_quality(self.preferred_quality, remote_max_quality);
-        let mut preloaded = self.preloaded_track_id.lock().await;
-        if *preloaded == Some(next_track.track_id)
+
+        let key = format!("{}_{}", next_track.track_id, quality.label());
+        if self.cache.l1.get(&key).await.is_some()
         {
             return;
         }
-        *preloaded = Some(next_track.track_id);
-        drop(preloaded);
+
+        let mut preloading_id = self.preloading_track_id.lock().await;
+        if *preloading_id == Some(next_track.track_id)
+        {
+            return;
+        }
+        *preloading_id = Some(next_track.track_id);
+        drop(preloading_id);
+
         self.spawn_preload_task(next_track, quality).await;
     }
 
@@ -1632,14 +1698,14 @@ impl AudioPlayback
             handle.abort();
         }
 
-        let prefetch_player = Arc::clone(&self.player);
-        let prefetch_client = self.client.clone();
-        let prefetch_printer = self.printer.clone();
+        let client = self.client.clone();
+        let printer = self.printer.clone();
         let preloading = Arc::clone(&self.preloading);
-        let preloaded_track_id = Arc::clone(&self.preloaded_track_id);
+        let preloading_track_id = Arc::clone(&self.preloading_track_id);
+        let cache = Arc::clone(&self.cache);
         let track_id = next_track.track_id;
         let prefetch_handle = tokio::spawn(async move {
-            prefetch_printer.event(
+            printer.event(
                 "audio_preloading",
                 json!({
                     "track_id": next_track.track_id,
@@ -1647,29 +1713,15 @@ impl AudioPlayback
                     "quality": quality.label()
                 }),
             );
-            let mut preload_failed = false;
-            match cmaf_download_full(&prefetch_client, next_track.track_id, quality).await
+            match cache.get(&client, track_id, quality).await
             {
-                Ok(audio_data) => match prefetch_player.play_next(audio_data, next_track.track_id)
+                Ok(_) =>
                 {
-                    Ok(()) => prefetch_printer
-                        .event("audio_preloaded", json!({ "track_id": next_track.track_id })),
-                    Err(err) =>
-                    {
-                        preload_failed = true;
-                        prefetch_printer.event(
-                            "audio_preload_error",
-                            json!({
-                                "error": err,
-                                "track_id": next_track.track_id
-                            }),
-                        );
-                    }
-                },
+                    printer.event("audio_preloaded", json!({ "track_id": next_track.track_id }));
+                }
                 Err(err) =>
                 {
-                    preload_failed = true;
-                    prefetch_printer.event(
+                    printer.event(
                         "audio_preload_error",
                         json!({
                             "error": err,
@@ -1678,13 +1730,10 @@ impl AudioPlayback
                     );
                 }
             }
-            if preload_failed
+            let mut preloading_id = preloading_track_id.lock().await;
+            if *preloading_id == Some(track_id)
             {
-                let mut preloaded = preloaded_track_id.lock().await;
-                if *preloaded == Some(track_id)
-                {
-                    *preloaded = None;
-                }
+                *preloading_id = None;
             }
         });
         *preloading.lock().await = Some(prefetch_handle);
@@ -1706,7 +1755,7 @@ impl AudioPlayback
         {
             handle.abort();
         }
-        *self.preloaded_track_id.lock().await = None;
+        *self.preloading_track_id.lock().await = None;
 
         let player = Arc::clone(&self.player);
         let client = self.client.clone();
@@ -1714,7 +1763,8 @@ impl AudioPlayback
         let mpris = self.mpris.clone();
         let control_sender = self.control_sender.clone();
         let preloading = Arc::clone(&self.preloading);
-        let preloaded_track_id = Arc::clone(&self.preloaded_track_id);
+        let preloading_track_id = Arc::clone(&self.preloading_track_id);
+        let cache = Arc::clone(&self.cache);
         let track_id = track.track_id;
         let handle = tokio::spawn(async move {
             printer.event(
@@ -1738,7 +1788,7 @@ impl AudioPlayback
             let mut last_error = None;
             for attempt in 1..=AUDIO_LOAD_ATTEMPTS
             {
-                match play_track_via_cmaf(&player, &client, track_id, quality).await
+                match play_track_via_cmaf(&player, &client, &cache, track_id, quality).await
                 {
                     Ok(()) =>
                     {
@@ -1755,12 +1805,11 @@ impl AudioPlayback
                         printer.event("audio_started", json!({ "track_id": track_id }));
                         if let Some(next_track) = next_track
                         {
-                            *preloaded_track_id.lock().await = Some(next_track.track_id);
-                            let prefetch_player = Arc::clone(&player);
                             let prefetch_client = client.clone();
                             let prefetch_printer = printer.clone();
-                            let preloaded_track_id_for_task = Arc::clone(&preloaded_track_id);
-                            let preload_track_id = next_track.track_id;
+                            let cache = Arc::clone(&cache);
+                            let preloading = Arc::clone(&preloading);
+                            let preloading_track_id = Arc::clone(&preloading_track_id);
                             let prefetch_handle = tokio::spawn(async move {
                                 prefetch_printer.event(
                                     "audio_preloading",
@@ -1770,39 +1819,17 @@ impl AudioPlayback
                                         "quality": quality.label()
                                     }),
                                 );
-                                let mut preload_failed = false;
-                                match cmaf_download_full(
-                                    &prefetch_client,
-                                    next_track.track_id,
-                                    quality,
-                                )
-                                .await
+                                match cache.get(&prefetch_client, next_track.track_id, quality).await
                                 {
-                                    Ok(audio_data) =>
+                                    Ok(_) =>
                                     {
-                                        match prefetch_player
-                                            .play_next(audio_data, next_track.track_id)
-                                        {
-                                            Ok(()) => prefetch_printer.event(
-                                                "audio_preloaded",
-                                                json!({ "track_id": next_track.track_id }),
-                                            ),
-                                            Err(err) =>
-                                            {
-                                                preload_failed = true;
-                                                prefetch_printer.event(
-                                                    "audio_preload_error",
-                                                    json!({
-                                                        "error": err,
-                                                        "track_id": next_track.track_id
-                                                    }),
-                                                );
-                                            }
-                                        }
+                                        prefetch_printer.event(
+                                            "audio_preloaded",
+                                            json!({ "track_id": next_track.track_id }),
+                                        );
                                     }
                                     Err(err) =>
                                     {
-                                        preload_failed = true;
                                         prefetch_printer.event(
                                             "audio_preload_error",
                                             json!({
@@ -1812,13 +1839,10 @@ impl AudioPlayback
                                         );
                                     }
                                 }
-                                if preload_failed
+                                let mut preloading_id = preloading_track_id.lock().await;
+                                if *preloading_id == Some(next_track.track_id)
                                 {
-                                    let mut preloaded = preloaded_track_id_for_task.lock().await;
-                                    if *preloaded == Some(preload_track_id)
-                                    {
-                                        *preloaded = None;
-                                    }
+                                    *preloading_id = None;
                                 }
                             });
                             *preloading.lock().await = Some(prefetch_handle);
@@ -1848,7 +1872,7 @@ impl AudioPlayback
             printer.event(
                 "audio_error",
                 json!({
-                    "error": last_error.unwrap_or_else(|| "audio load failed".to_string()),
+                    "error": last_error.unwrap_or_else(|| "unknown error".to_string()),
                     "track_id": track_id
                 }),
             );
@@ -1928,9 +1952,38 @@ impl AudioPlayback
         });
     }
 
-    fn snapshot(&self, fallback: &mut PlaybackState) -> PlaybackSnapshot
+    async fn snapshot(&self, fallback: &mut PlaybackState) -> PlaybackSnapshot
     {
         let event = self.player.get_playback_event();
+
+        if event.gapless_ready && event.gapless_next_track_id == 0
+        {
+            if let Some(next_track) = &fallback.next_track
+            {
+                let remote_max_quality = connect_quality_to_qobuz(fallback.max_audio_quality)
+                    .unwrap_or(self.preferred_quality);
+                let quality = lower_quality(self.preferred_quality, remote_max_quality);
+                let key = format!("{}_{}", next_track.track_id, quality.label());
+                if let Some(data) = self.cache.l1.get(&key).await
+                {
+                    if let Err(err) = self.player.play_next(data, next_track.track_id)
+                    {
+                        self.printer.event(
+                            "audio_error",
+                            json!({ "error": err, "track_id": next_track.track_id }),
+                        );
+                    }
+                    else
+                    {
+                        self.printer.event(
+                            "audio_gapless_queued",
+                            json!({ "track_id": next_track.track_id }),
+                        );
+                    }
+                }
+            }
+        }
+
         if event.track_id == 0
         {
             let snapshot = fallback.snapshot();
@@ -2094,17 +2147,12 @@ fn quality_rank(quality: Quality) -> u8
 async fn play_track_via_cmaf(
     player: &Player,
     client: &QobuzClient,
+    cache: &TrackCache,
     track_id: u64,
     quality: Quality,
 ) -> Result<(), String>
 {
-    log::info!("Player: downloading CMAF audio for track {} with quality {:?}", track_id, quality);
-    let audio_data = cmaf_download_full(client, track_id, quality).await?;
-    log::info!(
-        "Player: downloaded {} bytes of CMAF audio for track {}",
-        audio_data.len(),
-        track_id
-    );
+    let audio_data = cache.get(client, track_id, quality).await?;
     player.play_data(audio_data, track_id)
 }
 
@@ -2150,7 +2198,7 @@ impl CliEventSink
         let mut playback = self.playback.lock().await;
         match &self.audio
         {
-            Some(audio) => audio.snapshot(&mut playback),
+            Some(audio) => audio.snapshot(&mut playback).await,
             None => playback.snapshot(),
         }
     }
