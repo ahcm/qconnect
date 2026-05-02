@@ -1955,6 +1955,7 @@ impl AudioPlayback
     async fn snapshot(&self, fallback: &mut PlaybackState) -> PlaybackSnapshot
     {
         let event = self.player.get_playback_event();
+        let stream_error = self.player.state.has_stream_error();
 
         if event.gapless_ready && event.gapless_next_track_id == 0
         {
@@ -2074,6 +2075,7 @@ impl AudioPlayback
             current_position_ms: event.position.saturating_mul(1000),
             duration_ms: event.duration.saturating_mul(1000),
             finished,
+            stream_error,
             track_id: Some(event.track_id),
             queue_item_id: Some(event_queue_item.queue_item_id),
         };
@@ -2196,11 +2198,43 @@ impl CliEventSink
     async fn playback_snapshot(&self) -> PlaybackSnapshot
     {
         let mut playback = self.playback.lock().await;
-        match &self.audio
+        let snapshot = match &self.audio
         {
             Some(audio) => audio.snapshot(&mut playback).await,
             None => playback.snapshot(),
+        };
+
+        if snapshot.stream_error && snapshot.playing_state == PLAYING_STATE_PLAYING
+        {
+            if let Some(audio) = &self.audio
+            {
+                if let Some(track) = playback.current_track.clone()
+                {
+                    if audio.loading.lock().await.is_none()
+                    {
+                        self.printer.event(
+                            "audio_recovery",
+                            json!({
+                                "track_id": track.track_id,
+                                "position_ms": snapshot.current_position_ms
+                            }),
+                        );
+                        let audio = Arc::clone(audio);
+                        let next_track = playback.next_track.clone();
+                        let position_ms = Some(snapshot.current_position_ms);
+                        let max_audio_quality = playback.max_audio_quality;
+                        tokio::spawn(async move {
+                            tokio::time::sleep(Duration::from_secs(1)).await;
+                            audio
+                                .play(track, next_track, position_ms, max_audio_quality)
+                                .await;
+                        });
+                    }
+                }
+            }
         }
+
+        snapshot
     }
 
     async fn ensure_preloaded(&self, next_track: Option<QueueItem>)
@@ -2507,6 +2541,7 @@ impl PlaybackState
             current_position_ms: self.current_position_ms.saturating_add(elapsed),
             duration_ms: self.duration_ms,
             finished: false,
+            stream_error: false,
             track_id: self.current_track.as_ref().map(|track| track.track_id),
             queue_item_id: self.current_track.as_ref().map(|track| track.queue_item_id),
         }
@@ -2520,6 +2555,7 @@ struct PlaybackSnapshot
     current_position_ms: u64,
     duration_ms: u64,
     finished: bool,
+    stream_error: bool,
     track_id: Option<u64>,
     queue_item_id: Option<u64>,
 }
