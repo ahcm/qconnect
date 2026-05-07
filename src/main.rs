@@ -1,16 +1,100 @@
+mod cmaf;
+mod models;
+mod qobuz;
+mod transport;
+mod player;
 mod qconnect;
+mod app_types;
+mod app_logic;
 
+use crate::app_types::QueueCommandType;
+use std::sync::OnceLock;
 use std::{fmt, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use qbz_audio::{AudioBackendType, BackendManager};
-use qbz_models::Quality;
+use crate::models::Quality;
 use qconnect::{ClientOptions, QconnectClient};
-use qconnect_app::QueueCommandType;
 use serde_json::json;
 use tokio::time::sleep;
 use uuid::Uuid;
+
+/// Custom logger that detects EIO errors and signals the player to recover
+struct EioDetectLogger
+{
+    logger: env_logger::Logger,
+    eio_signal: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Sender<()>>>>,
+}
+
+impl log::Log for EioDetectLogger
+{
+    fn enabled(&self, metadata: &log::Metadata) -> bool
+    {
+        self.logger.enabled(metadata)
+    }
+
+    fn log(&self, record: &log::Record)
+    {
+        // Check for EIO error patterns before logging
+        let msg = record.args().to_string();
+        if msg.contains("snd_pcm_poll_descriptors_revents")
+            || msg.contains("Unknown errno")
+            || (msg.contains("(-5)") && msg.contains("output stream"))
+            || (msg.contains("EIO") && msg.contains("ALSA"))
+            || (msg.contains("backend-specific") && msg.contains("output stream"))
+        {
+            log::error!("Detected EIO error in log, triggering recovery: {}", msg);
+            if let Some(ref tx) = *self.eio_signal.lock().unwrap()
+            {
+                let _ = tx.try_send(());
+            }
+        }
+
+        // Then log normally
+        self.logger.log(record);
+    }
+
+    fn flush(&self)
+    {
+        self.logger.flush();
+    }
+}
+
+/// Static storage for the EIO signal sender (using OnceLock for safe static initialization)
+static EIO_SIGNAL: OnceLock<Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Sender<()>>>>> =
+    OnceLock::new();
+
+/// Get the EIO signal storage
+fn eio_signal_storage() -> Arc<std::sync::Mutex<Option<tokio::sync::mpsc::Sender<()>>>>
+{
+    EIO_SIGNAL
+        .get_or_init(|| Arc::new(std::sync::Mutex::new(None)))
+        .clone()
+}
+
+/// Initialize the custom EIO-detecting logger
+fn init_logger()
+{
+    let logger =
+        env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).build();
+
+    // Wrap with our EIO detector (will get the sender later)
+    let eio_logger = EioDetectLogger {
+        logger,
+        eio_signal: eio_signal_storage(),
+    };
+
+    log::set_boxed_logger(Box::new(eio_logger)).expect("Failed to set logger");
+    // Don't override the log level - let RUST_LOG environment variable control it
+    // log::set_max_level(log::LevelFilter::Warn);
+}
+
+/// Update the logger with the EIO signal sender after player is created
+fn update_logger_with_eio_signal(tx: tokio::sync::mpsc::Sender<()>)
+{
+    *eio_signal_storage().lock().unwrap() = Some(tx);
+    log::info!("EIO signal sender registered with logger");
+}
 
 #[derive(Debug, Parser)]
 #[command(
@@ -108,13 +192,8 @@ enum Command
         #[arg(long)]
         no_browser: bool,
     },
-    /// List audio backends and output device ids.
-    AudioDevices
-    {
-        /// Audio backend to inspect.
-        #[arg(long, env = "QCONNECT_AUDIO_BACKEND", value_enum)]
-        audio_backend: Option<AudioBackendChoice>,
-    },
+    /// List audio output devices.
+    AudioDevices,
     /// Join Qobuz Connect and expose this process as a headless renderer.
     Serve
     {
@@ -124,12 +203,9 @@ enum Command
         /// Disable local audio output while still advertising a renderer.
         #[arg(long)]
         no_audio: bool,
-        /// Output device name or backend-specific id for local audio playback.
+        /// Output device name for local audio playback.
         #[arg(long, env = "QCONNECT_AUDIO_DEVICE")]
         audio_device: Option<String>,
-        /// Audio backend for local playback.
-        #[arg(long, env = "QCONNECT_AUDIO_BACKEND", value_enum)]
-        audio_backend: Option<AudioBackendChoice>,
         /// Preferred Qobuz playback quality.
         #[arg(long, default_value_t = PlaybackQuality::UltraHiRes)]
         audio_quality: PlaybackQuality,
@@ -254,31 +330,6 @@ enum PlaybackQuality
     UltraHiRes,
 }
 
-#[derive(Debug, Clone, Copy, ValueEnum)]
-enum AudioBackendChoice
-{
-    Auto,
-    Pipewire,
-    Alsa,
-    Pulse,
-    SystemDefault,
-}
-
-impl AudioBackendChoice
-{
-    fn explicit_backend(self) -> Option<AudioBackendType>
-    {
-        match self
-        {
-            AudioBackendChoice::Auto => None,
-            AudioBackendChoice::Pipewire => Some(AudioBackendType::PipeWire),
-            AudioBackendChoice::Alsa => Some(AudioBackendType::Alsa),
-            AudioBackendChoice::Pulse => Some(AudioBackendType::Pulse),
-            AudioBackendChoice::SystemDefault => Some(AudioBackendType::SystemDefault),
-        }
-    }
-}
-
 impl PlaybackQuality
 {
     fn to_qobuz_quality(self) -> Quality
@@ -312,7 +363,7 @@ impl fmt::Display for PlaybackQuality
 async fn main() -> Result<()>
 {
     install_rustls_crypto_provider();
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    init_logger();
 
     let cli = Cli::parse();
     let command = cli.command;
@@ -358,32 +409,29 @@ async fn main() -> Result<()>
         return Ok(());
     }
 
-    if let Command::AudioDevices { audio_backend } = &command
+    if let Command::AudioDevices { .. } = &command
     {
-        list_audio_devices(*audio_backend)?;
+        list_audio_devices()?;
         return Ok(());
     }
 
-    let (enable_renderer, enable_audio, enable_mpris, audio_device, audio_backend, audio_quality) =
-        match &command
-        {
-            Command::Serve {
-                no_audio,
-                no_mpris,
-                audio_device,
-                audio_quality,
-                audio_backend,
-                ..
-            } => (
-                true,
-                !*no_audio,
-                !*no_audio && !*no_mpris,
-                audio_device.clone(),
-                select_audio_backend(*audio_backend),
-                audio_quality.to_qobuz_quality(),
-            ),
-            _ => (false, false, false, None, None, Quality::Lossless),
-        };
+    let (enable_renderer, enable_audio, enable_mpris, audio_device, audio_quality) = match &command
+    {
+        Command::Serve {
+            no_audio,
+            no_mpris,
+            audio_device,
+            audio_quality,
+            ..
+        } => (
+            true,
+            !*no_audio,
+            !*no_audio && !*no_mpris,
+            audio_device.clone(),
+            audio_quality.to_qobuz_quality(),
+        ),
+        _ => (false, false, false, None, Quality::Lossless),
+    };
     let wait_after_connect = wait_secs_for(&command);
 
     let options = ClientOptions {
@@ -420,7 +468,6 @@ async fn main() -> Result<()>
         qcloud_proto: cli.qcloud_proto,
         json: cli.json,
         audio_device,
-        audio_backend,
         audio_quality,
         enable_mpris,
     };
@@ -430,6 +477,16 @@ async fn main() -> Result<()>
             .await
             .context("connect to Qobuz Connect")?,
     );
+
+    // Wire up EIO signal sender to logger if audio is enabled
+    if enable_audio
+    {
+        if let Some(eio_tx) = client.eio_signal_sender()
+        {
+            update_logger_with_eio_signal(eio_tx);
+            log::info!("EIO error detection enabled for logger");
+        }
+    }
 
     match command
     {
@@ -444,6 +501,8 @@ async fn main() -> Result<()>
         } =>
         {
             client.spawn_state_reporter(Duration::from_secs(report_interval_secs.max(1)));
+            // Spawn position reporter to sync with Qobuz server every 5 seconds
+            client.spawn_position_reporter(5);
             tokio::signal::ctrl_c()
                 .await
                 .context("wait for Ctrl-C signal")?;
@@ -698,112 +757,62 @@ fn first_non_empty(values: impl IntoIterator<Item = Option<String>>) -> Option<S
         .find(|value| !value.is_empty())
 }
 
-fn list_audio_devices(choice: Option<AudioBackendChoice>) -> Result<()>
+fn list_audio_devices() -> Result<()>
 {
-    let backends = match choice.and_then(AudioBackendChoice::explicit_backend)
-    {
-        Some(backend) => vec![backend],
-        None => BackendManager::available_backends(),
+    use rodio::cpal::{
+        SampleFormat,
+        traits::{DeviceTrait, HostTrait},
     };
 
-    if backends.is_empty()
+    let host = rodio::cpal::default_host();
+
+    // Get default output device
+    let default_device = host.default_output_device();
+
+    // List all output devices
+    let devices = match host.output_devices()
     {
-        println!("No audio backends available");
-        return Ok(());
-    }
+        Ok(devices) => devices,
+        Err(err) =>
+        {
+            bail!("Failed to list audio devices: {}", err);
+        }
+    };
 
-    for backend_type in backends
+    for device in devices
     {
-        println!("backend: {}", audio_backend_name(backend_type));
-        let backend = match BackendManager::create_backend(backend_type)
-        {
-            Ok(backend) => backend,
-            Err(err) =>
-            {
-                println!("  unavailable: {err}");
-                continue;
-            }
-        };
-        if !backend.is_available()
-        {
-            println!("  unavailable");
-            continue;
-        }
+        // Get device name
+        let name = device
+            .description()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| "Unknown".to_string());
 
-        let devices = match backend.enumerate_devices()
-        {
-            Ok(devices) => devices,
-            Err(err) =>
-            {
-                println!("  failed to enumerate devices: {err}");
-                continue;
-            }
-        };
-        if devices.is_empty()
-        {
-            println!("  no output devices");
-            continue;
-        }
+        // Check if this is the default device
+        let is_default = default_device
+            .as_ref()
+            .map(|default| {
+                let default_name = default
+                    .description()
+                    .map(|n| n.to_string())
+                    .unwrap_or_else(|_| "".to_string());
+                &name == &default_name
+            })
+            .unwrap_or(false);
 
-        for device in devices
+        let default_marker = if is_default { " (default)" } else { "" };
+
+        println!("{}{}", name, default_marker);
+
+        // Try to get more info
+        if let Ok(config) = device.default_output_config()
         {
-            let default_marker = if device.is_default { " (default)" } else { "" };
-            println!("  id: {}{}", device.id, default_marker);
-            println!("    name: {}", device.name);
-            if let Some(description) = device.description
-            {
-                println!("    description: {description}");
-            }
-            if let Some(max_sample_rate) = device.max_sample_rate
-            {
-                println!("    max_sample_rate: {max_sample_rate}");
-            }
-            if let Some(rates) = device.supported_sample_rates
-            {
-                println!("    sample_rates: {:?}", rates);
-            }
+            println!("  Sample format: {:?}", SampleFormat::from(config.sample_format()));
+            println!("  Sample rate: {:?}", config.sample_rate());
+            println!("  Channels: {:?}", config.channels());
         }
     }
 
     Ok(())
-}
-
-fn select_audio_backend(choice: Option<AudioBackendChoice>) -> Option<AudioBackendType>
-{
-    choice
-        .and_then(AudioBackendChoice::explicit_backend)
-        .or_else(default_audio_backend)
-}
-
-fn default_audio_backend() -> Option<AudioBackendType>
-{
-    #[cfg(target_os = "linux")]
-    {
-        let available = BackendManager::available_backends();
-        [
-            AudioBackendType::PipeWire,
-            AudioBackendType::Pulse,
-            AudioBackendType::Alsa,
-        ]
-        .into_iter()
-        .find(|backend| available.contains(backend))
-    }
-
-    #[cfg(not(target_os = "linux"))]
-    {
-        Some(AudioBackendType::SystemDefault)
-    }
-}
-
-fn audio_backend_name(backend: AudioBackendType) -> &'static str
-{
-    match backend
-    {
-        AudioBackendType::PipeWire => "pipewire",
-        AudioBackendType::Alsa => "alsa",
-        AudioBackendType::Pulse => "pulse",
-        AudioBackendType::SystemDefault => "system-default",
-    }
 }
 
 fn install_rustls_crypto_provider()

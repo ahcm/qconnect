@@ -4,21 +4,18 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::player::AudioPlayer;
+use crate::app_types::*;
+use crate::app_logic::QconnectApp;
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
-use qbz_audio::{AudioBackendType, AudioDiagnostic, AudioSettings};
-use qbz_models::{Quality, Track};
-use qbz_player::Player;
-use qbz_qobuz::{QobuzClient, cmaf_download_full};
-use qconnect_app::{
-    QConnectQueueState, QConnectRendererState, QconnectApp, QconnectAppEvent, QconnectEventSink,
-    QueueCommandType, RendererCommand, RendererReport, RendererReportType,
-};
-use qconnect_core::QueueItem;
-use qconnect_transport_ws::{NativeWsTransport, TransportEvent, WsTransportConfig};
-use serde_json::{Value, json};
-use moka::future::Cache;
 use cacache;
+use moka::future::Cache;
+use crate::models::{Quality, Track};
+use crate::qobuz::{QobuzClient, cmaf_download_full};
+use crate::transport::queue::QueueItem;
+use crate::transport::{NativeWsTransport, TransportEvent, WsTransportConfig};
+use serde_json::{Value, json};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
 };
@@ -159,7 +156,6 @@ pub struct ClientOptions
     pub qcloud_proto: u32,
     pub json: bool,
     pub audio_device: Option<String>,
-    pub audio_backend: Option<AudioBackendType>,
     pub audio_quality: Quality,
     pub enable_mpris: bool,
 }
@@ -288,6 +284,86 @@ impl QconnectClient
         self.app.renderer_state_snapshot().await
     }
 
+    /// Get the EIO signal sender for use with the logger
+    pub fn eio_signal_sender(&self) -> Option<tokio::sync::mpsc::Sender<()>>
+    {
+        self.sink
+            .audio
+            .as_ref()
+            .map(|audio| audio.player.eio_signal_sender())
+    }
+
+    /// Report player position to Qobuz server (for multi-controller sync)
+    pub async fn report_position(&self) -> Result<()>
+    {
+        if let Some(ref audio) = self.sink.audio
+        {
+            let event = audio.player.get_playback_event();
+            let playing_state = if event.is_playing
+            {
+                PLAYING_STATE_PLAYING
+            }
+            else
+            {
+                PLAYING_STATE_PAUSED
+            };
+
+            let renderer = self.app.renderer_state_snapshot().await;
+            let target_track = if event.queue_item_id > 0
+            {
+                let queue = self.app.queue_state_snapshot().await;
+                queue
+                    .queue_items
+                    .iter()
+                    .find(|item| item.queue_item_id == event.queue_item_id)
+                    .cloned()
+            }
+            else if event.track_id > 0
+            {
+                let queue = self.app.queue_state_snapshot().await;
+                queue
+                    .queue_items
+                    .iter()
+                    .find(|item| item.track_id == event.track_id)
+                    .cloned()
+            }
+            else
+            {
+                renderer.current_track
+            };
+
+            send_mpris_player_state(&self.app, playing_state, target_track).await?;
+        }
+        Ok(())
+    }
+
+    /// Spawn periodic position reporter to sync with Qobuz server
+    pub fn spawn_position_reporter(self: &Arc<Self>, interval_secs: u64)
+    {
+        let client = Arc::clone(self);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
+            loop
+            {
+                interval.tick().await;
+                if let Some(ref audio) = client.sink.audio
+                {
+                    if audio.player.has_loaded_audio()
+                    {
+                        let event = audio.player.get_playback_event();
+                        if event.is_playing
+                        {
+                            if let Err(e) = client.report_position().await
+                            {
+                                log::warn!("Failed to report position: {}", e);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     pub fn spawn_state_reporter(self: &Arc<Self>, interval: Duration)
     {
         let app = Arc::clone(&self.app);
@@ -301,21 +377,32 @@ impl QconnectClient
                 let queue_version = queue.version;
                 let playback = sink.playback_snapshot().await;
                 let renderer = app.renderer_state_snapshot().await;
-                let report_current_track = playback
-                    .queue_item_id
-                    .and_then(|queue_item_id| queue_item_by_id(&queue, queue_item_id))
-                    .or_else(|| report_current_track(&renderer, playback.track_id));
-                let report_next_track = report_current_track
-                    .as_ref()
-                    .and_then(|track| adjacent_queue_item_in(&queue, track.queue_item_id, 1));
+
+                // Priority 1: Local queue item ID
+                let mut report_current_track = playback.queue_item_id.and_then(|id| queue_item_by_id(&queue, id));
+                
+                // Priority 2: If we have track_id but not queue_item_id (or queue is stale), 
+                // try to find the track_id in the queue.
+                if report_current_track.is_none() {
+                    if let Some(track_id) = playback.track_id {
+                        report_current_track = queue.queue_items.iter().find(|it| it.track_id == track_id).cloned();
+                    }
+                }
+
+                // Priority 3: Only if the player has NO track info, fallback to server's idea of current track
+                if report_current_track.is_none() && playback.track_id.is_none() {
+                    report_current_track = renderer.current_track.clone();
+                }
 
                 if playback.track_id.is_some() && report_current_track.is_none()
                 {
-                    // Skip reporting if the hardware is playing a track that the server hasn't
-                    // acknowledged yet (neither current nor next). Reporting the old track
-                    // with the new track's position would cause the state to "bounce" on controllers.
+                    log::debug!("Skipping report: player has track {:?}, but couldn't find a corresponding queue item", playback.track_id);
                     continue;
                 }
+
+                let report_next_track = report_current_track
+                    .as_ref()
+                    .and_then(|track| adjacent_queue_item_in(&queue, track.queue_item_id, 1));
 
                 if playback.finished
                 {
@@ -325,6 +412,8 @@ impl QconnectClient
                     {
                         if Some(current_queue_item_id) != advanced_from_queue_item_id
                         {
+                            log::info!("Track {:?} finished, attempting to advance from queue item {}", 
+                                playback.track_id, current_queue_item_id);
                             advanced_from_queue_item_id = Some(current_queue_item_id);
                             let target =
                                 adjacent_queue_item_from(&app, current_queue_item_id, 1).await;
@@ -332,8 +421,18 @@ impl QconnectClient
                             {
                                 let next_track =
                                     adjacent_queue_item_in(&queue, target.queue_item_id, 1);
+                                log::info!(
+                                    "Advancing: Playing next track {}#{} (next: {:?})",
+                                    target.track_id,
+                                    target.queue_item_id,
+                                    next_track.as_ref().map(|t| t.track_id)
+                                );
                                 sink.play_local_track(target, next_track).await;
                                 continue;
+                            }
+                            else
+                            {
+                                log::warn!("No next track found in queue after item {}", current_queue_item_id);
                             }
                         }
                     }
@@ -348,14 +447,21 @@ impl QconnectClient
                     sink.ensure_preloaded(report_next_track.clone()).await;
                 }
 
+                let current_queue_item_id = report_current_track
+                    .as_ref()
+                    .and_then(|track| i32::try_from(track.queue_item_id).ok());
+
+                if playback.playing_state == PLAYING_STATE_PLAYING && current_queue_item_id.is_none() {
+                    log::debug!("Suppressing report for playing state with no queue item ID");
+                    continue;
+                }
+
                 let payload = json!({
                     "playing_state": playback.playing_state,
                     "buffer_state": BUFFER_STATE_OK,
                     "current_position": playback.current_position_ms,
                     "duration": playback.duration_ms,
-                    "current_queue_item_id": report_current_track
-                        .as_ref()
-                        .and_then(|track| i32::try_from(track.queue_item_id).ok()),
+                    "current_queue_item_id": current_queue_item_id,
                     "next_queue_item_id": report_next_track
                         .as_ref()
                         .and_then(|track| i32::try_from(track.queue_item_id).ok()),
@@ -364,6 +470,7 @@ impl QconnectClient
                         "minor": queue_version.minor
                     }
                 });
+
                 let report = RendererReport::new(
                     RendererReportType::RndrSrvrStateUpdated,
                     Uuid::new_v4().to_string(),
@@ -430,7 +537,7 @@ fn spawn_transport_event_loop(
                                             };
                                             sink.apply_renderer_command(&command).await;
                                             printer.event(
-                                                "renderer_command",
+                                                "InboundQueueServerEvent renderer_command",
                                                 json!({
                                                     "command": format!("Intercepted Seek: {command:?}")
                                                 }),
@@ -1115,7 +1222,7 @@ impl Printer
             "renderer_command" =>
             {
                 println!(
-                    "renderer command: {}",
+                    "printer renderer command: {}",
                     payload
                         .get("command")
                         .and_then(Value::as_str)
@@ -1421,11 +1528,8 @@ async fn send_mpris_player_state(
     let renderer = app.renderer_state_snapshot().await;
     let queue = app.queue_state_snapshot().await;
     let has_explicit_target = target_track.is_some();
-    let mut current_track = target_track.or(renderer.current_track);
-    if current_track.is_none() && playing_state == PLAYING_STATE_PLAYING
-    {
-        current_track = ordered_queue_items(&queue).first().cloned();
-    }
+    let current_track = target_track.or(renderer.current_track);
+    
     let current_position = if has_explicit_target
     {
         Some(0)
@@ -1447,6 +1551,11 @@ async fn send_mpris_player_state(
         })
     });
 
+    if playing_state == PLAYING_STATE_PLAYING && current_queue_item.is_none() {
+        log::debug!("Suppressing MPRIS state report: playing but no current track known");
+        return Ok(());
+    }
+
     let command = app
         .build_queue_command(
             QueueCommandType::CtrlSrvrSetPlayerState,
@@ -1462,34 +1571,6 @@ async fn send_mpris_player_state(
     Ok(())
 }
 
-fn report_current_track(
-    renderer: &QConnectRendererState,
-    player_track_id: Option<u64>,
-) -> Option<QueueItem>
-{
-    match player_track_id
-    {
-        Some(track_id) =>
-        {
-            if let Some(current) = &renderer.current_track
-            {
-                if current.track_id == track_id
-                {
-                    return Some(current.clone());
-                }
-            }
-            if let Some(next) = &renderer.next_track
-            {
-                if next.track_id == track_id
-                {
-                    return Some(next.clone());
-                }
-            }
-            None
-        }
-        _ => renderer.current_track.clone(),
-    }
-}
 
 struct TrackCache
 {
@@ -1520,14 +1601,8 @@ impl TrackCache
     {
         let key = format!("{}_{}", track_id, quality.label());
 
-        if let Some(data) = self.l1.get(&key).await
+        if let Some(data) = self.get_cached(&key).await
         {
-            return Ok(data);
-        }
-
-        if let Ok(data) = cacache::read(&self.l2_path, &key).await
-        {
-            self.l1.insert(key, data.clone()).await;
             return Ok(data);
         }
 
@@ -1538,17 +1613,43 @@ impl TrackCache
 
         Ok(data)
     }
+
+    async fn get_cached(&self, key: &str) -> Option<Vec<u8>>
+    {
+        if let Some(data) = self.l1.get(key).await
+        {
+            return Some(data);
+        }
+
+        if let Ok(data) = cacache::read(&self.l2_path, key).await
+        {
+            self.l1.insert(key.to_string(), data.clone()).await;
+            return Some(data);
+        }
+
+        None
+    }
+
+    async fn has(&self, track_id: u64, quality: Quality) -> bool
+    {
+        let key = format!("{}_{}", track_id, quality.label());
+        if self.l1.contains_key(&key)
+        {
+            return true;
+        }
+        cacache::metadata(&self.l2_path, &key).await.is_ok()
+    }
 }
 
 struct AudioPlayback
 {
     client: QobuzClient,
-    player: Arc<Player>,
+    player: Arc<AudioPlayer>,
     printer: Printer,
     preferred_quality: Quality,
     loading: Mutex<Option<JoinHandle<()>>>,
     preloading: Arc<Mutex<Option<JoinHandle<()>>>>,
-    preloading_track_id: Arc<Mutex<Option<u64>>>,
+    preloading_queue_item_id: Arc<Mutex<Option<u64>>>,
     cache: Arc<TrackCache>,
     mpris: Option<Arc<StdMutex<MediaControls>>>,
     control_sender: Option<mpsc::UnboundedSender<MprisCommand>>,
@@ -1580,17 +1681,7 @@ impl AudioPlayback
             .await
             .context("restore Qobuz playback session")?;
 
-        let player = Player::new(
-            options.audio_device.clone(),
-            AudioSettings {
-                output_device: options.audio_device.clone(),
-                backend_type: options.audio_backend,
-                gapless_enabled: true,
-                ..Default::default()
-            },
-            None,
-            AudioDiagnostic::new(),
-        );
+        let player = AudioPlayer::new(options.audio_device.clone(), None);
         let mpris = mpris_sender
             .clone()
             .and_then(|sender| start_mpris(&printer, sender));
@@ -1599,7 +1690,6 @@ impl AudioPlayback
             "audio_ready",
             json!({
                 "device": options.audio_device,
-                "backend": options.audio_backend.map(audio_backend_name),
                 "quality": options.audio_quality.label()
             }),
         );
@@ -1616,7 +1706,7 @@ impl AudioPlayback
             preferred_quality: options.audio_quality,
             loading: Mutex::new(None),
             preloading: Arc::new(Mutex::new(None)),
-            preloading_track_id: Arc::new(Mutex::new(None)),
+            preloading_queue_item_id: Arc::new(Mutex::new(None)),
             cache,
             mpris,
             control_sender: mpris_sender,
@@ -1635,7 +1725,7 @@ impl AudioPlayback
             connect_quality_to_qobuz(max_audio_quality).unwrap_or(self.preferred_quality);
         let quality = lower_quality(self.preferred_quality, remote_max_quality);
         let current = self.player.get_playback_event();
-        if current.track_id == track.track_id && self.player.has_loaded_audio()
+        if current.queue_item_id == track.queue_item_id && self.player.has_loaded_audio()
         {
             if let Some(pos_ms) = position_ms
             {
@@ -1648,6 +1738,12 @@ impl AudioPlayback
                             "audio_error",
                             json!({ "error": err, "track_id": track.track_id }),
                         );
+                    }
+                    else
+                    {
+                        // Seek successful - report new position to server
+                        // Note: We can't call report_position here because we don't have access to app/QconnectClient
+                        // The position will be reported by the periodic reporter
                     }
                 }
             }
@@ -1674,18 +1770,45 @@ impl AudioPlayback
             connect_quality_to_qobuz(max_audio_quality).unwrap_or(self.preferred_quality);
         let quality = lower_quality(self.preferred_quality, remote_max_quality);
 
-        let key = format!("{}_{}", next_track.track_id, quality.label());
-        if self.cache.l1.get(&key).await.is_some()
+        if self.cache.has(next_track.track_id, quality).await
         {
+            let event = self.player.get_playback_event();
+            if event.gapless_next_queue_item_id == 0
+            {
+                let key = format!("{}_{}", next_track.track_id, quality.label());
+                if let Some(data) = self.cache.get_cached(&key).await
+                {
+                    if let Err(err) =
+                        self.player
+                            .play_next(data, next_track.track_id, next_track.queue_item_id)
+                    {
+                        self.printer.event(
+                            "audio_error",
+                            json!({ "error": err, "track_id": next_track.track_id }),
+                        );
+                    }
+                    else
+                    {
+                        self.printer.event(
+                            "audio_gapless_queued",
+                            json!({ "track_id": next_track.track_id, "cached": true }),
+                        );
+                    }
+                }
+            }
             return;
         }
 
-        let mut preloading_id = self.preloading_track_id.lock().await;
-        if *preloading_id == Some(next_track.track_id)
+        let mut preloading_id = self.preloading_queue_item_id.lock().await;
+        if *preloading_id == Some(next_track.queue_item_id)
         {
+            self.printer.event(
+                "audio_gapless_already_queued",
+                json!({ "track_id": next_track.track_id, "cached": true }),
+            );
             return;
         }
-        *preloading_id = Some(next_track.track_id);
+        *preloading_id = Some(next_track.queue_item_id);
         drop(preloading_id);
 
         self.spawn_preload_task(next_track, quality).await;
@@ -1700,24 +1823,36 @@ impl AudioPlayback
 
         let client = self.client.clone();
         let printer = self.printer.clone();
+        let player = Arc::clone(&self.player);
         let preloading = Arc::clone(&self.preloading);
-        let preloading_track_id = Arc::clone(&self.preloading_track_id);
+        let preloading_queue_item_id = Arc::clone(&self.preloading_queue_item_id);
         let cache = Arc::clone(&self.cache);
         let track_id = next_track.track_id;
+        let queue_item_id = next_track.queue_item_id;
+
         let prefetch_handle = tokio::spawn(async move {
             printer.event(
                 "audio_preloading",
                 json!({
-                    "track_id": next_track.track_id,
+                    "track_id": track_id,
                     "queue_item_id": next_track.queue_item_id,
                     "quality": quality.label()
                 }),
             );
+
             match cache.get(&client, track_id, quality).await
             {
-                Ok(_) =>
+                Ok(data) =>
                 {
-                    printer.event("audio_preloaded", json!({ "track_id": next_track.track_id }));
+                    printer.event("audio_preloaded", json!({ "track_id": track_id }));
+                    if let Err(err) = player.play_next(data, track_id, queue_item_id)
+                    {
+                        printer.event("audio_error", json!({ "error": err, "track_id": track_id }));
+                    }
+                    else
+                    {
+                        printer.event("audio_gapless_queued", json!({ "track_id": track_id }));
+                    }
                 }
                 Err(err) =>
                 {
@@ -1725,15 +1860,16 @@ impl AudioPlayback
                         "audio_preload_error",
                         json!({
                             "error": err,
-                            "track_id": next_track.track_id
+                            "track_id": track_id
                         }),
                     );
                 }
             }
-            let mut preloading_id = preloading_track_id.lock().await;
-            if *preloading_id == Some(track_id)
+
+            let mut id = preloading_queue_item_id.lock().await;
+            if *id == Some(queue_item_id)
             {
-                *preloading_id = None;
+                *id = None;
             }
         });
         *preloading.lock().await = Some(prefetch_handle);
@@ -1755,7 +1891,7 @@ impl AudioPlayback
         {
             handle.abort();
         }
-        *self.preloading_track_id.lock().await = None;
+        *self.preloading_queue_item_id.lock().await = None;
 
         let player = Arc::clone(&self.player);
         let client = self.client.clone();
@@ -1763,7 +1899,7 @@ impl AudioPlayback
         let mpris = self.mpris.clone();
         let control_sender = self.control_sender.clone();
         let preloading = Arc::clone(&self.preloading);
-        let preloading_track_id = Arc::clone(&self.preloading_track_id);
+        let preloading_queue_item_id = Arc::clone(&self.preloading_queue_item_id);
         let cache = Arc::clone(&self.cache);
         let track_id = track.track_id;
         let handle = tokio::spawn(async move {
@@ -1788,7 +1924,7 @@ impl AudioPlayback
             let mut last_error = None;
             for attempt in 1..=AUDIO_LOAD_ATTEMPTS
             {
-                match play_track_via_cmaf(&player, &client, &cache, track_id, quality).await
+                match play_track_via_cmaf(&player, &client, &cache, &track, quality).await
                 {
                     Ok(()) =>
                     {
@@ -1805,11 +1941,46 @@ impl AudioPlayback
                         printer.event("audio_started", json!({ "track_id": track_id }));
                         if let Some(next_track) = next_track
                         {
+                            let mut preloading_id = preloading_queue_item_id.lock().await;
+                            if cache.has(next_track.track_id, quality).await
+                            {
+                                let key = format!("{}_{}", next_track.track_id, quality.label());
+                                if let Some(data) = cache.get_cached(&key).await
+                                {
+                                    if let Err(err) = player.play_next(
+                                        data,
+                                        next_track.track_id,
+                                        next_track.queue_item_id,
+                                    )
+                                    {
+                                        printer.event(
+                                            "audio_error",
+                                            json!({ "error": err, "track_id": next_track.track_id }),
+                                        );
+                                    }
+                                    else
+                                    {
+                                        printer.event(
+                                            "audio_gapless_queued",
+                                            json!({ "track_id": next_track.track_id, "cached": true }),
+                                        );
+                                    }
+                                }
+                                return;
+                            }
+                            if *preloading_id == Some(next_track.queue_item_id)
+                            {
+                                return;
+                            }
+                            *preloading_id = Some(next_track.queue_item_id);
+                            drop(preloading_id);
+
                             let prefetch_client = client.clone();
                             let prefetch_printer = printer.clone();
+                            let prefetch_player = Arc::clone(&player);
                             let cache = Arc::clone(&cache);
                             let preloading = Arc::clone(&preloading);
-                            let preloading_track_id = Arc::clone(&preloading_track_id);
+                            let preloading_queue_item_id = Arc::clone(&preloading_queue_item_id);
                             let prefetch_handle = tokio::spawn(async move {
                                 prefetch_printer.event(
                                     "audio_preloading",
@@ -1819,14 +1990,34 @@ impl AudioPlayback
                                         "quality": quality.label()
                                     }),
                                 );
-                                match cache.get(&prefetch_client, next_track.track_id, quality).await
+                                match cache
+                                    .get(&prefetch_client, next_track.track_id, quality)
+                                    .await
                                 {
-                                    Ok(_) =>
+                                    Ok(data) =>
                                     {
                                         prefetch_printer.event(
                                             "audio_preloaded",
                                             json!({ "track_id": next_track.track_id }),
                                         );
+                                        if let Err(err) = prefetch_player.play_next(
+                                            data,
+                                            next_track.track_id,
+                                            next_track.queue_item_id,
+                                        )
+                                        {
+                                            prefetch_printer.event(
+                                                "audio_error",
+                                                json!({ "error": err, "track_id": next_track.track_id }),
+                                            );
+                                        }
+                                        else
+                                        {
+                                            prefetch_printer.event(
+                                                "audio_gapless_queued",
+                                                json!({ "track_id": next_track.track_id }),
+                                            );
+                                        }
                                     }
                                     Err(err) =>
                                     {
@@ -1839,8 +2030,8 @@ impl AudioPlayback
                                         );
                                     }
                                 }
-                                let mut preloading_id = preloading_track_id.lock().await;
-                                if *preloading_id == Some(next_track.track_id)
+                                let mut preloading_id = preloading_queue_item_id.lock().await;
+                                if *preloading_id == Some(next_track.queue_item_id)
                                 {
                                     *preloading_id = None;
                                 }
@@ -1957,29 +2148,45 @@ impl AudioPlayback
         let event = self.player.get_playback_event();
         let stream_error = self.player.state.has_stream_error();
 
-        if event.gapless_ready && event.gapless_next_track_id == 0
+        log::debug!(
+            "AudioHandle::snapshot: event.is_playing={}, event.position={}s, event.duration={}s",
+            event.is_playing,
+            event.position,
+            event.duration
+        );
+
+        if event.gapless_ready && event.gapless_next_queue_item_id == 0
         {
             if let Some(next_track) = &fallback.next_track
             {
-                let remote_max_quality = connect_quality_to_qobuz(fallback.max_audio_quality)
-                    .unwrap_or(self.preferred_quality);
-                let quality = lower_quality(self.preferred_quality, remote_max_quality);
-                let key = format!("{}_{}", next_track.track_id, quality.label());
-                if let Some(data) = self.cache.l1.get(&key).await
+                if next_track.queue_item_id != event.queue_item_id
                 {
-                    if let Err(err) = self.player.play_next(data, next_track.track_id)
+                    let remote_max_quality = connect_quality_to_qobuz(fallback.max_audio_quality)
+                        .unwrap_or(self.preferred_quality);
+                    let quality = lower_quality(self.preferred_quality, remote_max_quality);
+                    let key = format!("{}_{}", next_track.track_id, quality.label());
+
+                    // If it's in the cache, queue it immediately
+                    if let Some(data) = self.cache.get_cached(&key).await
                     {
-                        self.printer.event(
-                            "audio_error",
-                            json!({ "error": err, "track_id": next_track.track_id }),
-                        );
-                    }
-                    else
-                    {
-                        self.printer.event(
-                            "audio_gapless_queued",
-                            json!({ "track_id": next_track.track_id }),
-                        );
+                        if let Err(err) = self.player.play_next(
+                            data,
+                            next_track.track_id,
+                            next_track.queue_item_id,
+                        )
+                        {
+                            self.printer.event(
+                                "audio_error",
+                                json!({ "error": err, "track_id": next_track.track_id }),
+                            );
+                        }
+                        else
+                        {
+                            self.printer.event(
+                                "audio_gapless_queued",
+                                json!({ "track_id": next_track.track_id }),
+                            );
+                        }
                     }
                 }
             }
@@ -2002,7 +2209,19 @@ impl AudioPlayback
         let event_queue_item = fallback
             .current_track
             .as_ref()
-            .filter(|track| track.track_id == event.track_id)
+            .filter(|track| track.queue_item_id == event.queue_item_id)
+            .or_else(|| {
+                fallback
+                    .next_track
+                    .as_ref()
+                    .filter(|track| track.queue_item_id == event.queue_item_id)
+            })
+            .or_else(|| {
+                fallback
+                    .current_track
+                    .as_ref()
+                    .filter(|track| track.track_id == event.track_id)
+            })
             .or_else(|| {
                 fallback
                     .next_track
@@ -2051,7 +2270,29 @@ impl AudioPlayback
         let finished = !event.is_playing
             && fallback.playing_state == PLAYING_STATE_PLAYING
             && event.duration > 0
-            && event.position >= event.duration;
+            && event.position >= event.duration
+            && Some(event.queue_item_id) == fallback.current_track.as_ref().map(|t| t.queue_item_id);
+
+        log::debug!(
+            "Finished check: not_playing={}, was_playing={}, has_duration={}, pos_gt_dur={} (position={}s, duration={}s)",
+            !event.is_playing,
+            fallback.playing_state == PLAYING_STATE_PLAYING,
+            event.duration > 0,
+            event.position >= event.duration,
+            event.position,
+            event.duration
+        );
+
+        if finished
+        {
+            log::info!(
+                "Track finished detected: is_playing={}, was_playing={}, position={}s, duration={}s",
+                event.is_playing,
+                fallback.playing_state == PLAYING_STATE_PLAYING,
+                event.position,
+                event.duration
+            );
+        }
 
         let playing_state = if event.is_playing
         {
@@ -2099,17 +2340,6 @@ fn connect_quality_to_qobuz(max_audio_quality: i32) -> Option<Quality>
     }
 }
 
-fn audio_backend_name(backend: AudioBackendType) -> &'static str
-{
-    match backend
-    {
-        AudioBackendType::PipeWire => "pipewire",
-        AudioBackendType::Alsa => "alsa",
-        AudioBackendType::Pulse => "pulse",
-        AudioBackendType::SystemDefault => "system-default",
-    }
-}
-
 #[cfg(all(target_os = "linux", target_env = "musl"))]
 fn warn_if_static_musl_audio(printer: &Printer)
 {
@@ -2147,15 +2377,15 @@ fn quality_rank(quality: Quality) -> u8
     }
 }
 async fn play_track_via_cmaf(
-    player: &Player,
+    player: &AudioPlayer,
     client: &QobuzClient,
     cache: &TrackCache,
-    track_id: u64,
+    track: &QueueItem,
     quality: Quality,
 ) -> Result<(), String>
 {
-    let audio_data = cache.get(client, track_id, quality).await?;
-    player.play_data(audio_data, track_id)
+    let audio_data = cache.get(client, track.track_id, quality).await?;
+    player.play_data(audio_data, track.track_id, track.queue_item_id)
 }
 
 enum AudioAction
@@ -2267,7 +2497,7 @@ impl CliEventSink
         };
         self.apply_renderer_command(&command).await;
         self.printer.event(
-            "renderer_command",
+            "play_local_track renderer_command",
             json!({
                 "command": format!("Local Advance: {command:?}")
             }),
@@ -2303,11 +2533,11 @@ impl QconnectEventSink for CliEventSink
                     }),
                 );
             }
-            QconnectAppEvent::RendererCommandApplied { command, .. } =>
+            QconnectAppEvent::RendererCommandApplied { command } =>
             {
                 self.apply_renderer_command(&command).await;
                 self.printer.event(
-                    "renderer_command",
+                    "applied renderer_command",
                     json!({
                         "command": format!("{command:?}")
                     }),
@@ -2316,8 +2546,14 @@ impl QconnectEventSink for CliEventSink
             QconnectAppEvent::RendererUpdated(renderer) =>
             {
                 let mut playback = self.playback.lock().await;
-                playback.current_track = renderer.current_track;
-                playback.next_track = renderer.next_track;
+                let current_matches = playback.current_track.as_ref().map(|t| t.queue_item_id)
+                    == renderer.current_track.as_ref().map(|t| t.queue_item_id);
+
+                if playback.current_track.is_none() || current_matches
+                {
+                    playback.current_track = renderer.current_track;
+                    playback.next_track = renderer.next_track;
+                }
             }
             QconnectAppEvent::SessionManagementEvent {
                 message_type,
@@ -2340,18 +2576,6 @@ impl QconnectEventSink for CliEventSink
                     }),
                 );
             }
-            QconnectAppEvent::PendingActionTimedOut { uuid, timeout_ms } =>
-            {
-                self.printer.event(
-                    "pending_timeout",
-                    json!({
-                        "uuid": uuid,
-                        "timeout_ms": timeout_ms
-                    }),
-                );
-            }
-            _ =>
-            {}
         }
     }
 }
@@ -2371,13 +2595,27 @@ impl CliEventSink
                 next_track,
             } =>
             {
+                let current_track_changed = current_track.as_ref().is_some_and(|track| {
+                    playback
+                        .current_track
+                        .as_ref()
+                        .map(|current| current.queue_item_id != track.queue_item_id)
+                        .unwrap_or(true)
+                });
                 if let Some(value) = playing_state
                 {
                     playback.playing_state = *value;
                 }
                 if let Some(value) = current_position_ms
                 {
-                    playback.current_position_ms = *value;
+                    // Only update position if it's not 0 (avoid redundant SetState loops)
+                    // If position is 0 and we're already playing, keep the current position
+                    if *value > 0
+                        || current_track_changed
+                        || playback.playing_state != PLAYING_STATE_PLAYING
+                    {
+                        playback.current_position_ms = *value;
+                    }
                     // Only seek if it's not a seek to 0 (which is usually handled by track transition)
                     // or if the position is significantly different.
                     if *value > 0
@@ -2388,8 +2626,11 @@ impl CliEventSink
                 if let Some(track) = current_track
                 {
                     playback.current_track = Some(track.clone());
+                    // If we're setting current_track, we should also update/clear next_track
+                    // based on what's in the command, because current/next are a pair.
+                    playback.next_track = next_track.clone();
                 }
-                if let Some(track) = next_track
+                else if let Some(track) = next_track
                 {
                     playback.next_track = Some(track.clone());
                 }
@@ -2403,11 +2644,29 @@ impl CliEventSink
                         if let Some(track) = playback.current_track.clone()
                         {
                             seek_to = None; // Handled by Play action
+                            // Only include position if it's > 0 (avoid redundant seeks to 0)
+                            let action_position_ms = match current_position_ms
+                            {
+                                Some(pos) if *pos > 0 => *current_position_ms,
+                                Some(_) => None, // Don't seek to 0
+                                None =>
+                                {
+                                    // Only use current position if we're not already playing
+                                    if playback.playing_state == PLAYING_STATE_PLAYING
+                                    {
+                                        None
+                                    }
+                                    else
+                                    {
+                                        Some(playback.current_position_ms)
+                                    }
+                                }
+                            };
+
                             Some(AudioAction::Play {
                                 track,
                                 next_track: playback.next_track.clone(),
-                                position_ms: current_position_ms
-                                    .or(Some(playback.current_position_ms)),
+                                position_ms: action_position_ms,
                                 max_audio_quality: playback.max_audio_quality,
                             })
                         }
