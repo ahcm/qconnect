@@ -1,18 +1,23 @@
-#![allow(dead_code)]
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub struct QueueVersion {
+pub struct QueueVersion
+{
     pub major: u64,
     pub minor: u64,
 }
 
-impl QueueVersion {
-    pub const fn new(major: u64, minor: u64) -> Self {
+impl QueueVersion
+{
+    pub const fn new(major: u64, minor: u64) -> Self
+    {
         Self { major, minor }
     }
 
-    pub const fn next_minor(self) -> Self {
+    pub const fn next_minor(self) -> Self
+    {
         Self {
             major: self.major,
             minor: self.minor.saturating_add(1),
@@ -21,14 +26,24 @@ impl QueueVersion {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QueueItem {
+pub struct QueueItem
+{
     pub track_context_uuid: String,
     pub track_id: u64,
     pub queue_item_id: u64,
 }
 
+impl fmt::Display for QueueItem
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result
+    {
+        write!(f, "#{0}", self.queue_item_id)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct QConnectQueueState {
+pub struct QConnectQueueState
+{
     pub version: QueueVersion,
     pub queue_items: Vec<QueueItem>,
     pub shuffle_mode: bool,
@@ -39,8 +54,10 @@ pub struct QConnectQueueState {
     pub updated_at_ms: u64,
 }
 
-impl Default for QConnectQueueState {
-    fn default() -> Self {
+impl Default for QConnectQueueState
+{
+    fn default() -> Self
+    {
         Self {
             version: QueueVersion::default(),
             queue_items: Vec::new(),
@@ -55,12 +72,15 @@ impl Default for QConnectQueueState {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum QueueEvent {
-    QueueStateReplaced {
+pub enum QueueEvent
+{
+    QueueStateReplaced
+    {
         action_uuid: Option<String>,
         state: QConnectQueueState,
     },
-    TracksAdded {
+    TracksAdded
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
         tracks: Vec<QueueItem>,
@@ -68,7 +88,8 @@ pub enum QueueEvent {
         autoplay_reset: bool,
         autoplay_loading: bool,
     },
-    TracksLoaded {
+    TracksLoaded
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
         tracks: Vec<QueueItem>,
@@ -79,7 +100,8 @@ pub enum QueueEvent {
         autoplay_reset: bool,
         autoplay_loading: bool,
     },
-    TracksInserted {
+    TracksInserted
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
         tracks: Vec<QueueItem>,
@@ -88,14 +110,16 @@ pub enum QueueEvent {
         autoplay_reset: bool,
         autoplay_loading: bool,
     },
-    TracksRemoved {
+    TracksRemoved
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
         queue_item_ids: Vec<u64>,
         autoplay_reset: bool,
         autoplay_loading: bool,
     },
-    TracksReordered {
+    TracksReordered
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
         queue_item_ids: Vec<u64>,
@@ -103,11 +127,13 @@ pub enum QueueEvent {
         autoplay_reset: bool,
         autoplay_loading: bool,
     },
-    QueueCleared {
+    QueueCleared
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
     },
-    ShuffleModeSet {
+    ShuffleModeSet
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
         shuffle_mode: bool,
@@ -116,24 +142,28 @@ pub enum QueueEvent {
         autoplay_reset: bool,
         autoplay_loading: bool,
     },
-    AutoplayModeSet {
+    AutoplayModeSet
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
         autoplay_mode: bool,
         autoplay_reset: bool,
         autoplay_loading: bool,
     },
-    AutoplayTracksLoaded {
+    AutoplayTracksLoaded
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
         tracks: Vec<QueueItem>,
     },
-    AutoplayTracksRemoved {
+    AutoplayTracksRemoved
+    {
         action_uuid: Option<String>,
         version: QueueVersion,
         queue_item_ids: Vec<u64>,
     },
-    QueueError {
+    QueueError
+    {
         action_uuid: Option<String>,
         version: Option<QueueVersion>,
         code: String,
