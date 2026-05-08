@@ -1,4 +1,4 @@
-use aes::cipher::{BlockDecryptMut, KeyIvInit, StreamCipher};
+use aes::cipher::{BlockModeDecrypt, KeyIvInit, StreamCipher};
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -65,8 +65,11 @@ pub fn unwrap_content_key(session_key: &[u8; 16], key_str: &str) -> Result<[u8; 
     }
 
     let mut buf = wrapped.clone();
-    let decrypted = Aes128CbcDec::new(session_key.into(), iv.as_slice().into())
-        .decrypt_padded_mut::<aes::cipher::block_padding::Pkcs7>(&mut buf)
+    let iv_arr: [u8; 16] = iv
+        .try_into()
+        .map_err(|_| CmafError::InvalidKey("IV length mismatch".into()))?;
+    let decrypted = Aes128CbcDec::new(session_key.into(), &iv_arr.into())
+        .decrypt_padded::<aes::cipher::block_padding::Pkcs7>(&mut buf)
         .map_err(|e| CmafError::AesDecrypt(format!("AES-CBC unwrap failed: {e}")))?;
 
     if decrypted.len() != 16
@@ -116,7 +119,7 @@ pub fn compute_request_sig(
     hasher.update(timestamp.as_bytes());
     hasher.update(seed.as_bytes());
 
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 #[cfg(test)]

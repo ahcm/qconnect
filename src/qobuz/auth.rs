@@ -16,7 +16,7 @@ pub fn generate_signature(method: &str, params: &str, timestamp: u64, secret: &s
     let sig_string = format!("{}{}{}{}", method, params, timestamp, secret);
     let mut hasher = Md5::new();
     hasher.update(sig_string.as_bytes());
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 /// Generate signature for track/getFileUrl endpoint
