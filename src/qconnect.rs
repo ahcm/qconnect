@@ -1741,28 +1741,31 @@ impl AudioPlayback
             connect_quality_to_qobuz(max_audio_quality).unwrap_or(self.preferred_quality);
         let quality = lower_quality(self.preferred_quality, remote_max_quality);
         let current = self.player.get_playback_event();
-        if current.queue_item_id == track.queue_item_id && self.player.has_loaded_audio()
+        if current.queue_item_id == track.queue_item_id
         {
-            if let Some(pos_ms) = position_ms
+            if self.player.has_loaded_audio()
             {
-                let current_pos_ms = current.position.saturating_mul(1000);
-                if pos_ms.abs_diff(current_pos_ms) > 3000
+                if let Some(pos_ms) = position_ms
                 {
-                    if let Err(err) = self.player.seek(pos_ms / 1000)
+                    let current_pos_ms = current.position.saturating_mul(1000);
+                    if pos_ms.abs_diff(current_pos_ms) > 3000
                     {
-                        self.printer.event(
-                            "audio_error",
-                            json!({ "error": err, "track_id": track.track_id }),
-                        );
+                        if let Err(err) = self.player.seek(pos_ms / 1000)
+                        {
+                            self.printer.event(
+                                "audio_error",
+                                json!({ "error": err, "track_id": track.track_id }),
+                            );
+                        }
                     }
                 }
+                if let Err(err) = self.player.resume()
+                {
+                    self.printer
+                        .event("audio_error", json!({ "error": err, "track_id": track.track_id }));
+                }
             }
-            if let Err(err) = self.player.resume()
-            {
-                self.printer
-                    .event("audio_error", json!({ "error": err, "track_id": track.track_id }));
-            }
-
+            // Whether loaded or still initializing: preload next track and don't restart current.
             if let Some(next_track) = next_track
             {
                 self.ensure_preloaded(next_track, max_audio_quality).await;
@@ -1795,11 +1798,15 @@ impl AudioPlayback
             connect_quality_to_qobuz(max_audio_quality).unwrap_or(self.preferred_quality);
         let quality = lower_quality(self.preferred_quality, remote_max_quality);
 
+        let event = self.player.get_playback_event();
+        if event.queue_item_id == next_track.queue_item_id
+        {
+            return;
+        }
+
         if self.cache.has(next_track.track_id, quality).await
         {
-            let event = self.player.get_playback_event();
             if event.gapless_next_queue_item_id == 0
-                && event.queue_item_id != next_track.queue_item_id
             {
                 let key = format!("{}_{}", next_track.track_id, quality.label());
                 if let Some(data) = self.cache.get_cached(&key).await
@@ -1820,15 +1827,17 @@ impl AudioPlayback
                             json!({ "track_id": next_track.track_id, "cached": true }),
                         );
                     }
+                    return;
                 }
+                // has() returned true but get_cached() returned None — cache entry is corrupt.
+                // Fall through to download.
+                self.printer
+                    .event("audio_cache_corrupt", json!({ "track_id": next_track.track_id }));
             }
-            return;
-        }
-
-        let event = self.player.get_playback_event();
-        if event.queue_item_id == next_track.queue_item_id
-        {
-            return;
+            else
+            {
+                return; // gapless already queued
+            }
         }
 
         let mut preloading_id = self.preloading_queue_item_id.lock().await;
@@ -1974,7 +1983,7 @@ impl AudioPlayback
                         if let Some(next_track) = next_track
                         {
                             let mut preloading_id = preloading_queue_item_id.lock().await;
-                            if cache.has(next_track.track_id, quality).await
+                            let cache_hit = if cache.has(next_track.track_id, quality).await
                             {
                                 let key = format!("{}_{}", next_track.track_id, quality.label());
                                 if let Some(data) = cache.get_cached(&key).await
@@ -1997,7 +2006,24 @@ impl AudioPlayback
                                             json!({ "track_id": next_track.track_id, "cached": true }),
                                         );
                                     }
+                                    true
                                 }
+                                else
+                                {
+                                    // has() true but get_cached() failed — cache entry is corrupt.
+                                    printer.event(
+                                        "audio_cache_corrupt",
+                                        json!({ "track_id": next_track.track_id }),
+                                    );
+                                    false
+                                }
+                            }
+                            else
+                            {
+                                false
+                            };
+                            if cache_hit
+                            {
                                 return;
                             }
                             if *preloading_id == Some(next_track.queue_item_id)
