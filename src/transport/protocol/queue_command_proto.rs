@@ -1,6 +1,7 @@
 #[derive(Clone, Copy, PartialEq, Eq, Debug, ::prost::Enumeration)]
 #[repr(i32)]
-pub enum QConnectMessageType {
+pub enum QConnectMessageType
+{
     MessageTypeRndrSrvrJoinSession = 21,
     MessageTypeRndrSrvrDeviceInfoUpdated = 22,
     MessageTypeRndrSrvrStateUpdated = 23,
@@ -65,7 +66,8 @@ pub enum QConnectMessageType {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueVersionRef {
+pub struct QueueVersionRef
+{
     #[prost(int32, optional, tag = "1")]
     pub major: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -73,7 +75,8 @@ pub struct QueueVersionRef {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ErrorMessage {
+pub struct ErrorMessage
+{
     /// Server sends error codes as strings (e.g. "ERROR_QUEUE_INSERT_TRACKS"),
     /// not integers. Wire type = LengthDelimited (string).
     #[prost(string, optional, tag = "1")]
@@ -83,7 +86,8 @@ pub struct ErrorMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueTrack {
+pub struct QueueTrack
+{
     #[prost(int32, optional, tag = "1")]
     pub queue_item_id: Option<i32>,
     #[prost(fixed32, optional, tag = "2")]
@@ -91,7 +95,8 @@ pub struct QueueTrack {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueTrackWithContext {
+pub struct QueueTrackWithContext
+{
     #[prost(int32, optional, tag = "1")]
     pub queue_item_id: Option<i32>,
     #[prost(fixed32, optional, tag = "2")]
@@ -101,7 +106,8 @@ pub struct QueueTrackWithContext {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetQueueTrackWithContext {
+pub struct SetQueueTrackWithContext
+{
     #[prost(int32, optional, tag = "1")]
     pub track_id: Option<i32>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -109,7 +115,8 @@ pub struct SetQueueTrackWithContext {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DeviceCapabilitiesMessage {
+pub struct DeviceCapabilitiesMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub min_audio_quality: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -119,7 +126,8 @@ pub struct DeviceCapabilitiesMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct DeviceInfoMessage {
+pub struct DeviceInfoMessage
+{
     #[prost(bytes = "vec", optional, tag = "1")]
     pub device_uuid: Option<Vec<u8>>,
     #[prost(string, optional, tag = "2")]
@@ -139,7 +147,8 @@ pub struct DeviceInfoMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct JoinSessionMessage {
+pub struct JoinSessionMessage
+{
     #[prost(bytes = "vec", optional, tag = "1")]
     pub session_uuid: Option<Vec<u8>>,
     #[prost(message, optional, tag = "2")]
@@ -156,7 +165,8 @@ pub struct JoinSessionMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetPlayerStateQueueItemMessage {
+pub struct SetPlayerStateQueueItemMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(int32, optional, tag = "2")]
@@ -164,7 +174,8 @@ pub struct SetPlayerStateQueueItemMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetPlayerStateMessage {
+pub struct SetPlayerStateMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub playing_state: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -174,13 +185,15 @@ pub struct SetPlayerStateMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetActiveRendererMessage {
+pub struct SetActiveRendererMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetVolumeMessage {
+pub struct SetVolumeMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -190,13 +203,15 @@ pub struct SetVolumeMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetLoopModeMessage {
+pub struct SetLoopModeMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub loop_mode: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct MuteVolumeMessage {
+pub struct MuteVolumeMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(bool, optional, tag = "2")]
@@ -204,7 +219,8 @@ pub struct MuteVolumeMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetMaxAudioQualityMessage {
+pub struct SetMaxAudioQualityMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -212,13 +228,15 @@ pub struct SetMaxAudioQualityMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AskForRendererStateMessage {
+pub struct AskForRendererStateMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ClearQueueMessage {
+pub struct ClearQueueMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -226,7 +244,8 @@ pub struct ClearQueueMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueLoadTracksMessage {
+pub struct QueueLoadTracksMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -250,7 +269,8 @@ pub struct QueueLoadTracksMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueInsertTracksMessage {
+pub struct QueueInsertTracksMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -270,7 +290,8 @@ pub struct QueueInsertTracksMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueAddTracksMessage {
+pub struct QueueAddTracksMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -288,7 +309,8 @@ pub struct QueueAddTracksMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueRemoveTracksMessage {
+pub struct QueueRemoveTracksMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -302,7 +324,8 @@ pub struct QueueRemoveTracksMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueReorderTracksMessage {
+pub struct QueueReorderTracksMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -318,7 +341,8 @@ pub struct QueueReorderTracksMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetShuffleModeMessage {
+pub struct SetShuffleModeMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -336,7 +360,8 @@ pub struct SetShuffleModeMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetAutoplayModeMessage {
+pub struct SetAutoplayModeMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -350,7 +375,8 @@ pub struct SetAutoplayModeMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AutoplayLoadTracksMessage {
+pub struct AutoplayLoadTracksMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -362,7 +388,8 @@ pub struct AutoplayLoadTracksMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AutoplayRemoveTracksMessage {
+pub struct AutoplayRemoveTracksMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -372,7 +399,8 @@ pub struct AutoplayRemoveTracksMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct SetQueueStateMessage {
+pub struct SetQueueStateMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -392,7 +420,8 @@ pub struct SetQueueStateMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AskForQueueStateMessage {
+pub struct AskForQueueStateMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version_ref: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -400,7 +429,8 @@ pub struct AskForQueueStateMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueErrorMessage {
+pub struct QueueErrorMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -410,7 +440,8 @@ pub struct QueueErrorMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueClearedMessage {
+pub struct QueueClearedMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -418,7 +449,8 @@ pub struct QueueClearedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueStateMessage {
+pub struct QueueStateMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -440,7 +472,8 @@ pub struct QueueStateMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueTracksLoadedMessage {
+pub struct QueueTracksLoadedMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -466,7 +499,8 @@ pub struct QueueTracksLoadedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueTracksInsertedMessage {
+pub struct QueueTracksInsertedMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -488,7 +522,8 @@ pub struct QueueTracksInsertedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueTracksAddedMessage {
+pub struct QueueTracksAddedMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -508,7 +543,8 @@ pub struct QueueTracksAddedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueTracksRemovedMessage {
+pub struct QueueTracksRemovedMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -524,7 +560,8 @@ pub struct QueueTracksRemovedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueTracksReorderedMessage {
+pub struct QueueTracksReorderedMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -542,7 +579,8 @@ pub struct QueueTracksReorderedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct ShuffleModeSetMessage {
+pub struct ShuffleModeSetMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -562,7 +600,8 @@ pub struct ShuffleModeSetMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AutoplayModeSetMessage {
+pub struct AutoplayModeSetMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -576,7 +615,8 @@ pub struct AutoplayModeSetMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AutoplayTracksLoadedMessage {
+pub struct AutoplayTracksLoadedMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -588,7 +628,8 @@ pub struct AutoplayTracksLoadedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct AutoplayTracksRemovedMessage {
+pub struct AutoplayTracksRemovedMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(bytes = "vec", optional, tag = "2")]
@@ -598,7 +639,8 @@ pub struct AutoplayTracksRemovedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QueueTracksAddedFromAutoplayMessage {
+pub struct QueueTracksAddedFromAutoplayMessage
+{
     #[prost(message, optional, tag = "1")]
     pub queue_version: Option<QueueVersionRef>,
     #[prost(int32, repeated, packed = "false", tag = "2")]
@@ -608,7 +650,8 @@ pub struct QueueTracksAddedFromAutoplayMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererSetStateMessage {
+pub struct RendererSetStateMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub playing_state: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -622,7 +665,8 @@ pub struct RendererSetStateMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererSetVolumeMessage {
+pub struct RendererSetVolumeMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub volume: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -630,37 +674,43 @@ pub struct RendererSetVolumeMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererSetActiveMessage {
+pub struct RendererSetActiveMessage
+{
     #[prost(bool, optional, tag = "1")]
     pub active: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererSetMaxAudioQualityMessage {
+pub struct RendererSetMaxAudioQualityMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub max_audio_quality: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererSetLoopModeMessage {
+pub struct RendererSetLoopModeMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub loop_mode: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererSetShuffleModeMessage {
+pub struct RendererSetShuffleModeMessage
+{
     #[prost(bool, optional, tag = "1")]
     pub shuffle_mode: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererMuteVolumeMessage {
+pub struct RendererMuteVolumeMessage
+{
     #[prost(bool, optional, tag = "1")]
     pub value: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct PlaybackPositionMessage {
+pub struct PlaybackPositionMessage
+{
     #[prost(fixed64, optional, tag = "1")]
     pub timestamp: Option<u64>,
     #[prost(int32, optional, tag = "2")]
@@ -668,7 +718,8 @@ pub struct PlaybackPositionMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererStateMessage {
+pub struct RendererStateMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub playing_state: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -686,25 +737,29 @@ pub struct RendererStateMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererStateUpdatedMessage {
+pub struct RendererStateUpdatedMessage
+{
     #[prost(message, optional, tag = "1")]
     pub state: Option<RendererStateMessage>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererVolumeChangedMessage {
+pub struct RendererVolumeChangedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub volume: Option<i32>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererVolumeMutedMessage {
+pub struct RendererVolumeMutedMessage
+{
     #[prost(bool, optional, tag = "1")]
     pub value: Option<bool>,
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererFileAudioQualityChangedMessage {
+pub struct RendererFileAudioQualityChangedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub sampling_rate: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -716,7 +771,8 @@ pub struct RendererFileAudioQualityChangedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct RendererMaxAudioQualityChangedMessage {
+pub struct RendererMaxAudioQualityChangedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub max_audio_quality: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -727,7 +783,8 @@ pub struct RendererMaxAudioQualityChangedMessage {
 
 /// Type 81: Session state after joining
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlSessionStateMessage {
+pub struct CtrlSessionStateMessage
+{
     #[prost(bytes = "vec", optional, tag = "1")]
     pub session_uuid: Option<Vec<u8>>,
     #[prost(int32, optional, tag = "2")]
@@ -742,7 +799,8 @@ pub struct CtrlSessionStateMessage {
 
 /// Nested player state for CtrlRendererStateUpdatedMessage
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlRendererPlayerState {
+pub struct CtrlRendererPlayerState
+{
     #[prost(int32, optional, tag = "1")]
     pub playing_state: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -757,7 +815,8 @@ pub struct CtrlRendererPlayerState {
 
 /// Type 82: Renderer state updated (controller view)
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlRendererStateUpdatedMessage {
+pub struct CtrlRendererStateUpdatedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -768,7 +827,8 @@ pub struct CtrlRendererStateUpdatedMessage {
 
 /// Type 83: New renderer added to session
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlAddRendererMessage {
+pub struct CtrlAddRendererMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(message, optional, tag = "2")]
@@ -777,7 +837,8 @@ pub struct CtrlAddRendererMessage {
 
 /// Type 84: Renderer info updated
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlUpdateRendererMessage {
+pub struct CtrlUpdateRendererMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(message, optional, tag = "2")]
@@ -786,21 +847,24 @@ pub struct CtrlUpdateRendererMessage {
 
 /// Type 85: Renderer removed from session
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlRemoveRendererMessage {
+pub struct CtrlRemoveRendererMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
 }
 
 /// Type 86: Active renderer changed
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlActiveRendererChangedMessage {
+pub struct CtrlActiveRendererChangedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub active_renderer_id: Option<i32>,
 }
 
 /// Type 87: Volume changed on a renderer (controller view)
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlVolumeChangedMessage {
+pub struct CtrlVolumeChangedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(uint32, optional, tag = "2")]
@@ -809,14 +873,16 @@ pub struct CtrlVolumeChangedMessage {
 
 /// Type 97: Loop mode set
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlLoopModeSetMessage {
+pub struct CtrlLoopModeSetMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub loop_mode: Option<i32>,
 }
 
 /// Type 98: Volume muted (controller view)
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlVolumeMutedMessage {
+pub struct CtrlVolumeMutedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(bool, optional, tag = "2")]
@@ -825,7 +891,8 @@ pub struct CtrlVolumeMutedMessage {
 
 /// Type 99: Max audio quality changed (controller view)
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlMaxAudioQualityChangedMessage {
+pub struct CtrlMaxAudioQualityChangedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(int32, optional, tag = "2")]
@@ -836,7 +903,8 @@ pub struct CtrlMaxAudioQualityChangedMessage {
 
 /// Type 100: File audio quality changed (controller view)
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlFileAudioQualityChangedMessage {
+pub struct CtrlFileAudioQualityChangedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(uint32, optional, tag = "2")]
@@ -851,7 +919,8 @@ pub struct CtrlFileAudioQualityChangedMessage {
 
 /// Type 101: Device audio quality changed (controller view)
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct CtrlDeviceAudioQualityChangedMessage {
+pub struct CtrlDeviceAudioQualityChangedMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub renderer_id: Option<i32>,
     #[prost(uint32, optional, tag = "2")]
@@ -863,7 +932,8 @@ pub struct CtrlDeviceAudioQualityChangedMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QConnectMessages {
+pub struct QConnectMessages
+{
     #[prost(fixed64, optional, tag = "1")]
     pub messages_time: Option<u64>,
     #[prost(int32, optional, tag = "2")]
@@ -873,7 +943,8 @@ pub struct QConnectMessages {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct QConnectMessage {
+pub struct QConnectMessage
+{
     #[prost(int32, optional, tag = "1")]
     pub message_type: Option<i32>,
     #[prost(message, optional, tag = "21")]

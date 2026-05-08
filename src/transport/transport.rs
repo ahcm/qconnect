@@ -4,25 +4,25 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
+use crate::transport::protocol::{
+    InboundEnvelope, OutboundEnvelope, QueueEventType, QueueServerEvent, RendererServerCommand,
+    decode_inbound_json, decode_queue_server_events, decode_renderer_server_commands,
+    encode_outbound_payload_bytes,
+};
 use async_trait::async_trait;
 use futures_util::{SinkExt, StreamExt};
 use prost::{
-    encoding::{decode_varint, encode_varint},
     Message,
-};
-use crate::transport::protocol::{
-    decode_inbound_json, decode_queue_server_events, decode_renderer_server_commands,
-    encode_outbound_payload_bytes, InboundEnvelope, OutboundEnvelope, QueueEventType,
-    QueueServerEvent, RendererServerCommand,
+    encoding::{decode_varint, encode_varint},
 };
 use serde::{Deserialize, Serialize};
 use tokio::{
-    sync::{broadcast, mpsc, watch, Mutex},
+    sync::{Mutex, broadcast, mpsc, watch},
     task::JoinHandle,
 };
 use tokio_tungstenite::{
     connect_async_with_config,
-    tungstenite::{protocol::WebSocketConfig, Message as WsMessage},
+    tungstenite::{Message as WsMessage, protocol::WebSocketConfig},
 };
 
 use super::{WsTransportConfig, WsTransportError};
@@ -34,7 +34,8 @@ const MSG_TYPE_ERROR: u8 = 9;
 const MSG_TYPE_DISCONNECT: u8 = 10;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TransportEvent {
+pub enum TransportEvent
+{
     Connected,
     Disconnected,
     Authenticated,
@@ -49,30 +50,36 @@ pub enum TransportEvent {
     /// `reconnect_max_attempts` consecutive attempts without ever reaching
     /// `SessionEstablished`. The transport gives up after this event so the
     /// upper layer can decide whether to surface it to the user.
-    MaxReconnectAttemptsExceeded {
+    MaxReconnectAttemptsExceeded
+    {
         attempts: u32,
         last_reason: String,
     },
-    ReconnectScheduled {
+    ReconnectScheduled
+    {
         attempt: u32,
         backoff_ms: u64,
         reason: String,
     },
     KeepalivePingSent,
     KeepalivePongReceived,
-    TransportError {
+    TransportError
+    {
         stage: String,
         message: String,
     },
-    InboundFrameDecoded {
+    InboundFrameDecoded
+    {
         cloud_message_type: u8,
         payload_size: usize,
     },
-    InboundPayloadBytes {
+    InboundPayloadBytes
+    {
         cloud_message_type: u8,
         payload: Vec<u8>,
     },
-    OutboundSent {
+    OutboundSent
+    {
         message_type: String,
         action_uuid: String,
     },
@@ -82,7 +89,8 @@ pub enum TransportEvent {
     /// JWT). Carries the cloud-side `code` and human-readable `descr` so
     /// downstream consumers can reason about *why* the cloud is rejecting us
     /// instead of only seeing a payload byte count (issue #358).
-    CloudError {
+    CloudError
+    {
         msg_id: u32,
         code: u32,
         descr: String,
@@ -93,7 +101,8 @@ pub enum TransportEvent {
 }
 
 #[async_trait]
-pub trait WsTransport: Send + Sync {
+pub trait WsTransport: Send + Sync
+{
     async fn connect(&self, config: WsTransportConfig) -> Result<(), WsTransportError>;
     async fn disconnect(&self) -> Result<(), WsTransportError>;
     async fn send(&self, envelope: OutboundEnvelope) -> Result<(), WsTransportError>;
@@ -101,20 +110,24 @@ pub trait WsTransport: Send + Sync {
 }
 
 #[derive(Debug, Default)]
-struct InMemoryState {
+struct InMemoryState
+{
     connected: bool,
     last_config: Option<WsTransportConfig>,
     sent_messages: Vec<OutboundEnvelope>,
 }
 
 #[derive(Clone)]
-pub struct InMemoryWsTransport {
+pub struct InMemoryWsTransport
+{
     state: Arc<Mutex<InMemoryState>>,
     events_tx: broadcast::Sender<TransportEvent>,
 }
 
-impl InMemoryWsTransport {
-    pub fn new() -> Self {
+impl InMemoryWsTransport
+{
+    pub fn new() -> Self
+    {
         let (events_tx, _) = broadcast::channel(512);
         Self {
             state: Arc::new(Mutex::new(InMemoryState::default())),
@@ -122,33 +135,41 @@ impl InMemoryWsTransport {
         }
     }
 
-    pub async fn inject_inbound(&self, envelope: InboundEnvelope) -> Result<(), WsTransportError> {
+    pub async fn inject_inbound(&self, envelope: InboundEnvelope) -> Result<(), WsTransportError>
+    {
         self.events_tx
             .send(TransportEvent::InboundReceived(envelope))
             .map_err(|_| WsTransportError::EventChannelClosed)?;
         Ok(())
     }
 
-    pub async fn sent_messages(&self) -> Vec<OutboundEnvelope> {
+    pub async fn sent_messages(&self) -> Vec<OutboundEnvelope>
+    {
         self.state.lock().await.sent_messages.clone()
     }
 
-    pub async fn is_connected(&self) -> bool {
+    pub async fn is_connected(&self) -> bool
+    {
         self.state.lock().await.connected
     }
 }
 
-impl Default for InMemoryWsTransport {
-    fn default() -> Self {
+impl Default for InMemoryWsTransport
+{
+    fn default() -> Self
+    {
         Self::new()
     }
 }
 
 #[async_trait]
-impl WsTransport for InMemoryWsTransport {
-    async fn connect(&self, config: WsTransportConfig) -> Result<(), WsTransportError> {
+impl WsTransport for InMemoryWsTransport
+{
+    async fn connect(&self, config: WsTransportConfig) -> Result<(), WsTransportError>
+    {
         let mut state = self.state.lock().await;
-        if state.connected {
+        if state.connected
+        {
             return Err(WsTransportError::AlreadyConnected);
         }
 
@@ -162,9 +183,11 @@ impl WsTransport for InMemoryWsTransport {
         Ok(())
     }
 
-    async fn disconnect(&self) -> Result<(), WsTransportError> {
+    async fn disconnect(&self) -> Result<(), WsTransportError>
+    {
         let mut state = self.state.lock().await;
-        if !state.connected {
+        if !state.connected
+        {
             return Err(WsTransportError::NotConnected);
         }
 
@@ -177,9 +200,11 @@ impl WsTransport for InMemoryWsTransport {
         Ok(())
     }
 
-    async fn send(&self, envelope: OutboundEnvelope) -> Result<(), WsTransportError> {
+    async fn send(&self, envelope: OutboundEnvelope) -> Result<(), WsTransportError>
+    {
         let mut state = self.state.lock().await;
-        if !state.connected {
+        if !state.connected
+        {
             return Err(WsTransportError::NotConnected);
         }
 
@@ -195,33 +220,39 @@ impl WsTransport for InMemoryWsTransport {
         Ok(())
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<TransportEvent> {
+    fn subscribe(&self) -> broadcast::Receiver<TransportEvent>
+    {
         self.events_tx.subscribe()
     }
 }
 
 #[derive(Debug, Default)]
-struct NativeState {
+struct NativeState
+{
     connected: bool,
     running: bool,
     last_config: Option<WsTransportConfig>,
 }
 
-struct NativeRuntime {
+struct NativeRuntime
+{
     outbound_tx: mpsc::Sender<OutboundEnvelope>,
     shutdown_tx: watch::Sender<bool>,
     handle: JoinHandle<()>,
 }
 
 #[derive(Clone)]
-pub struct NativeWsTransport {
+pub struct NativeWsTransport
+{
     state: Arc<Mutex<NativeState>>,
     runtime: Arc<Mutex<Option<NativeRuntime>>>,
     events_tx: broadcast::Sender<TransportEvent>,
 }
 
-impl NativeWsTransport {
-    pub fn new() -> Self {
+impl NativeWsTransport
+{
+    pub fn new() -> Self
+    {
         let (events_tx, _) = broadcast::channel(2048);
         Self {
             state: Arc::new(Mutex::new(NativeState::default())),
@@ -230,22 +261,28 @@ impl NativeWsTransport {
         }
     }
 
-    pub async fn is_connected(&self) -> bool {
+    pub async fn is_connected(&self) -> bool
+    {
         self.state.lock().await.connected
     }
 }
 
-impl Default for NativeWsTransport {
-    fn default() -> Self {
+impl Default for NativeWsTransport
+{
+    fn default() -> Self
+    {
         Self::new()
     }
 }
 
 #[async_trait]
-impl WsTransport for NativeWsTransport {
-    async fn connect(&self, config: WsTransportConfig) -> Result<(), WsTransportError> {
+impl WsTransport for NativeWsTransport
+{
+    async fn connect(&self, config: WsTransportConfig) -> Result<(), WsTransportError>
+    {
         let mut runtime_guard = self.runtime.lock().await;
-        if runtime_guard.is_some() {
+        if runtime_guard.is_some()
+        {
             return Err(WsTransportError::AlreadyRunning);
         }
 
@@ -272,7 +309,8 @@ impl WsTransport for NativeWsTransport {
         Ok(())
     }
 
-    async fn disconnect(&self) -> Result<(), WsTransportError> {
+    async fn disconnect(&self) -> Result<(), WsTransportError>
+    {
         let runtime = self
             .runtime
             .lock()
@@ -293,7 +331,8 @@ impl WsTransport for NativeWsTransport {
         Ok(())
     }
 
-    async fn send(&self, envelope: OutboundEnvelope) -> Result<(), WsTransportError> {
+    async fn send(&self, envelope: OutboundEnvelope) -> Result<(), WsTransportError>
+    {
         let outbound_tx = self
             .runtime
             .lock()
@@ -308,7 +347,8 @@ impl WsTransport for NativeWsTransport {
             .map_err(|_| WsTransportError::TransportChannelClosed)
     }
 
-    fn subscribe(&self) -> broadcast::Receiver<TransportEvent> {
+    fn subscribe(&self) -> broadcast::Receiver<TransportEvent>
+    {
         self.events_tx.subscribe()
     }
 }
@@ -319,7 +359,8 @@ async fn run_native_transport_loop(
     mut shutdown_rx: watch::Receiver<bool>,
     events_tx: broadcast::Sender<TransportEvent>,
     state: Arc<Mutex<NativeState>>,
-) {
+)
+{
     let base_backoff = config.reconnect_backoff_ms.max(200);
     let max_backoff = config.reconnect_backoff_max_ms.max(base_backoff);
     let max_attempts = config.reconnect_max_attempts;
@@ -327,8 +368,10 @@ async fn run_native_transport_loop(
     let mut reconnect_attempt: u32 = 0;
     let mut msg_id: u32 = 0;
 
-    loop {
-        if *shutdown_rx.borrow() {
+    loop
+    {
+        if *shutdown_rx.borrow()
+        {
             break;
         }
 
@@ -342,9 +385,11 @@ async fn run_native_transport_loop(
         )
         .await;
 
-        let (mut ws, _) = match connect_result {
+        let (mut ws, _) = match connect_result
+        {
             Ok(Ok((ws, response))) => (ws, response),
-            Ok(Err(err)) => {
+            Ok(Err(err)) =>
+            {
                 match handle_reconnect_delay(
                     &events_tx,
                     &mut shutdown_rx,
@@ -360,7 +405,8 @@ async fn run_native_transport_loop(
                     ReconnectOutcome::Shutdown | ReconnectOutcome::Exhausted => break,
                 }
             }
-            Err(_) => {
+            Err(_) =>
+            {
                 match handle_reconnect_delay(
                     &events_tx,
                     &mut shutdown_rx,
@@ -391,8 +437,10 @@ async fn run_native_transport_loop(
         }
         emit(&events_tx, TransportEvent::Connected);
 
-        if let Some(jwt_qws) = config.jwt_qws.as_ref() {
-            if let Err(err) = send_authenticate(&mut ws, &mut msg_id, jwt_qws).await {
+        if let Some(jwt_qws) = config.jwt_qws.as_ref()
+        {
+            if let Err(err) = send_authenticate(&mut ws, &mut msg_id, jwt_qws).await
+            {
                 emit(
                     &events_tx,
                     TransportEvent::TransportError {
@@ -424,7 +472,8 @@ async fn run_native_transport_loop(
             emit(&events_tx, TransportEvent::Authenticated);
         }
 
-        if config.auto_subscribe {
+        if config.auto_subscribe
+        {
             if let Err(err) = send_subscribe(
                 &mut ws,
                 &mut msg_id,
@@ -464,9 +513,8 @@ async fn run_native_transport_loop(
             emit(&events_tx, TransportEvent::Subscribed);
         }
 
-        let mut keepalive = tokio::time::interval(Duration::from_millis(
-            config.keepalive_interval_ms.max(1_000),
-        ));
+        let mut keepalive =
+            tokio::time::interval(Duration::from_millis(config.keepalive_interval_ms.max(1_000)));
         keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
 
         // Per-connection latch. Only the first SESSION_STATE on this WS resets
@@ -474,7 +522,8 @@ async fn run_native_transport_loop(
         // keep paying the lock cost.
         let mut session_established = false;
 
-        let disconnect_reason = loop {
+        let disconnect_reason = loop
+        {
             tokio::select! {
                 _ = shutdown_rx.changed() => {
                     if *shutdown_rx.borrow() {
@@ -560,7 +609,8 @@ async fn run_native_transport_loop(
         }
         emit(&events_tx, TransportEvent::Disconnected);
 
-        if *shutdown_rx.borrow() {
+        if *shutdown_rx.borrow()
+        {
             break;
         }
 
@@ -586,7 +636,8 @@ async fn run_native_transport_loop(
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum ReconnectOutcome {
+enum ReconnectOutcome
+{
     /// Backoff completed; the loop should attempt to reconnect.
     Continue,
     /// Shutdown was requested while waiting; the loop must terminate.
@@ -604,11 +655,14 @@ async fn handle_reconnect_delay(
     max_backoff: u64,
     max_attempts: Option<u32>,
     reason: String,
-) -> ReconnectOutcome {
+) -> ReconnectOutcome
+{
     *reconnect_attempt = reconnect_attempt.saturating_add(1);
 
-    if let Some(cap) = max_attempts {
-        if cap > 0 && *reconnect_attempt > cap {
+    if let Some(cap) = max_attempts
+    {
+        if cap > 0 && *reconnect_attempt > cap
+        {
             emit(
                 events_tx,
                 TransportEvent::MaxReconnectAttemptsExceeded {
@@ -647,14 +701,16 @@ async fn handle_reconnect_delay(
 /// because that is the signal the reconnect loop uses to reset its backoff
 /// counters (see issue #358).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-struct InboundFrameOutcome {
+struct InboundFrameOutcome
+{
     session_state_seen: bool,
 }
 
 fn handle_incoming_binary(
     events_tx: &broadcast::Sender<TransportEvent>,
     data: &[u8],
-) -> Result<InboundFrameOutcome, WsTransportError> {
+) -> Result<InboundFrameOutcome, WsTransportError>
+{
     let (cloud_message_type, payload) = decode_qcloud_frame(data)?;
     let mut outcome = InboundFrameOutcome::default();
 
@@ -666,8 +722,10 @@ fn handle_incoming_binary(
         },
     );
 
-    match cloud_message_type {
-        MSG_TYPE_PAYLOAD => {
+    match cloud_message_type
+    {
+        MSG_TYPE_PAYLOAD =>
+        {
             let cloud_payload = CloudPayload::decode(payload).map_err(|err| {
                 WsTransportError::Protocol(format!("decode payload envelope: {err}"))
             })?;
@@ -686,51 +744,57 @@ fn handle_incoming_binary(
             //   field 2 (int32): messages_id
             //   field 3 (repeated): QConnectMessage entries
             // Pass directly to decoders — no inner envelope unwrapping needed.
-            log::info!(
-                "[QConnect/Decode] Decoding QConnectBatch: {} bytes",
-                inner_payload.len()
-            );
+            log::info!("[QConnect/Decode] Decoding QConnectBatch: {} bytes", inner_payload.len());
 
-            match decode_queue_server_events(&inner_payload) {
-                Ok(events) => {
+            match decode_queue_server_events(&inner_payload)
+            {
+                Ok(events) =>
+                {
                     log::info!("[QConnect/Decode] Queue events decoded: {}", events.len());
-                    for event in events {
-                        if event.event_type == QueueEventType::SrvrCtrlSessionState {
+                    for event in events
+                    {
+                        if event.event_type == QueueEventType::SrvrCtrlSessionState
+                        {
                             outcome.session_state_seen = true;
                         }
                         emit(events_tx, TransportEvent::InboundQueueServerEvent(event));
                     }
                 }
-                Err(err) => {
+                Err(err) =>
+                {
                     log::warn!("[QConnect/Decode] Queue events decode error: {}", err);
                 }
             }
 
-            match decode_renderer_server_commands(&inner_payload) {
-                Ok(commands) => {
-                    if !commands.is_empty() {
+            match decode_renderer_server_commands(&inner_payload)
+            {
+                Ok(commands) =>
+                {
+                    if !commands.is_empty()
+                    {
                         log::info!(
                             "[QConnect/Decode] Renderer commands decoded: {}",
                             commands.len()
                         );
                     }
-                    for command in commands {
-                        emit(
-                            events_tx,
-                            TransportEvent::InboundRendererServerCommand(command),
-                        );
+                    for command in commands
+                    {
+                        emit(events_tx, TransportEvent::InboundRendererServerCommand(command));
                     }
                 }
-                Err(err) => {
+                Err(err) =>
+                {
                     log::debug!("[QConnect/Decode] Renderer commands decode error: {}", err);
                 }
             }
 
-            if let Ok(inbound) = decode_inbound_json(&inner_payload) {
+            if let Ok(inbound) = decode_inbound_json(&inner_payload)
+            {
                 emit(events_tx, TransportEvent::InboundReceived(inbound));
             }
         }
-        MSG_TYPE_ERROR => {
+        MSG_TYPE_ERROR =>
+        {
             // Decode the qws-level ErrorMessage (qws.proto messageTypeId=9):
             //   uint32 msg_id = 1;
             //   uint64 msg_date = 2;
@@ -740,8 +804,10 @@ fn handle_incoming_binary(
             // your session" (zombie session, conflicting device, expired JWT,
             // ...). Without decoding it we cannot tell *why* the cloud is
             // tearing us down — see issue #358.
-            match QwsErrorMessage::decode(payload) {
-                Ok(error) => {
+            match QwsErrorMessage::decode(payload)
+            {
+                Ok(error) =>
+                {
                     let msg_id = error.msg_id.unwrap_or(0);
                     let code = error.code.unwrap_or(0);
                     let descr = error.descr.unwrap_or_default();
@@ -760,7 +826,8 @@ fn handle_incoming_binary(
                         },
                     );
                 }
-                Err(err) => {
+                Err(err) =>
+                {
                     log::warn!(
                         "[QConnect/Transport] Cloud error frame failed to decode as qws.ErrorMessage: bytes={} err={}",
                         payload.len(),
@@ -776,7 +843,8 @@ fn handle_incoming_binary(
                 }
             }
         }
-        MSG_TYPE_DISCONNECT => {
+        MSG_TYPE_DISCONNECT =>
+        {
             emit(
                 events_tx,
                 TransportEvent::TransportError {
@@ -785,7 +853,8 @@ fn handle_incoming_binary(
                 },
             );
         }
-        _ => {}
+        _ =>
+        {}
     }
 
     Ok(outcome)
@@ -859,7 +928,8 @@ where
         .map_err(|err| WsTransportError::Protocol(format!("send payload: {err}")))
 }
 
-fn encode_qcloud_frame(msg_type: u8, payload: &[u8]) -> Vec<u8> {
+fn encode_qcloud_frame(msg_type: u8, payload: &[u8]) -> Vec<u8>
+{
     let mut frame = Vec::with_capacity(1 + 10 + payload.len());
     frame.push(msg_type);
     encode_varint(payload.len() as u64, &mut frame);
@@ -867,8 +937,10 @@ fn encode_qcloud_frame(msg_type: u8, payload: &[u8]) -> Vec<u8> {
     frame
 }
 
-fn decode_qcloud_frame(data: &[u8]) -> Result<(u8, &[u8]), WsTransportError> {
-    if data.is_empty() {
+fn decode_qcloud_frame(data: &[u8]) -> Result<(u8, &[u8]), WsTransportError>
+{
+    if data.is_empty()
+    {
         return Err(WsTransportError::Protocol("empty qcloud frame".to_string()));
     }
 
@@ -881,7 +953,8 @@ fn decode_qcloud_frame(data: &[u8]) -> Result<(u8, &[u8]), WsTransportError> {
     let consumed_varint = data.len().saturating_sub(1 + cursor.len());
     let payload_start = 1 + consumed_varint;
 
-    if data.len() < payload_start + payload_len {
+    if data.len() < payload_start + payload_len
+    {
         return Err(WsTransportError::Protocol(format!(
             "truncated qcloud frame: expected={}, got={}",
             payload_start + payload_len,
@@ -892,16 +965,19 @@ fn decode_qcloud_frame(data: &[u8]) -> Result<(u8, &[u8]), WsTransportError> {
     Ok((msg_type, &data[payload_start..payload_start + payload_len]))
 }
 
-fn emit(events_tx: &broadcast::Sender<TransportEvent>, event: TransportEvent) {
+fn emit(events_tx: &broadcast::Sender<TransportEvent>, event: TransportEvent)
+{
     let _ = events_tx.send(event);
 }
 
-fn next_msg_id(msg_id: &mut u32) -> u32 {
+fn next_msg_id(msg_id: &mut u32) -> u32
+{
     *msg_id = msg_id.saturating_add(1);
     *msg_id
 }
 
-fn now_ms() -> u64 {
+fn now_ms() -> u64
+{
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -909,7 +985,8 @@ fn now_ms() -> u64 {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-struct Authenticate {
+struct Authenticate
+{
     #[prost(uint32, optional, tag = "1")]
     pub msg_id: Option<u32>,
     #[prost(uint64, optional, tag = "2")]
@@ -919,7 +996,8 @@ struct Authenticate {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-struct Subscribe {
+struct Subscribe
+{
     #[prost(uint32, optional, tag = "1")]
     pub msg_id: Option<u32>,
     #[prost(uint64, optional, tag = "2")]
@@ -934,7 +1012,8 @@ struct Subscribe {
 /// payload of `MSG_TYPE_ERROR` qcloud frames. All fields are optional to
 /// match proto3 semantics (see issue #358).
 #[derive(Clone, PartialEq, ::prost::Message)]
-struct QwsErrorMessage {
+struct QwsErrorMessage
+{
     #[prost(uint32, optional, tag = "1")]
     pub msg_id: Option<u32>,
     #[prost(uint64, optional, tag = "2")]
@@ -946,7 +1025,8 @@ struct QwsErrorMessage {
 }
 
 #[derive(Clone, PartialEq, ::prost::Message)]
-struct CloudPayload {
+struct CloudPayload
+{
     #[prost(uint32, optional, tag = "1")]
     pub msg_id: Option<u32>,
     #[prost(uint64, optional, tag = "2")]
@@ -962,11 +1042,13 @@ struct CloudPayload {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests
+{
     use super::*;
 
     #[test]
-    fn qcloud_frame_roundtrip() {
+    fn qcloud_frame_roundtrip()
+    {
         let payload = vec![0x01, 0x02, 0x03, 0x04];
         let encoded = encode_qcloud_frame(MSG_TYPE_PAYLOAD, &payload);
         let (msg_type, decoded_payload) = decode_qcloud_frame(&encoded).expect("decode frame");
@@ -980,7 +1062,8 @@ mod tests {
     /// distinguish a zombie session from any other transport hiccup and the
     /// reconnect loop spins blindly.
     #[tokio::test]
-    async fn msg_type_error_frame_decodes_into_cloud_error_event() {
+    async fn msg_type_error_frame_decodes_into_cloud_error_event()
+    {
         let (events_tx, mut events_rx) = broadcast::channel::<TransportEvent>(8);
 
         let error_payload = QwsErrorMessage {
@@ -1001,12 +1084,14 @@ mod tests {
         let first = events_rx.recv().await.expect("first event");
         assert!(matches!(first, TransportEvent::InboundFrameDecoded { .. }));
 
-        match events_rx.recv().await.expect("second event") {
+        match events_rx.recv().await.expect("second event")
+        {
             TransportEvent::CloudError {
                 msg_id,
                 code,
                 descr,
-            } => {
+            } =>
+            {
                 assert_eq!(msg_id, 42);
                 assert_eq!(code, 403);
                 assert_eq!(descr, "zombie_session");
@@ -1016,7 +1101,8 @@ mod tests {
     }
 
     #[test]
-    fn qcloud_frame_rejects_truncated_payload() {
+    fn qcloud_frame_rejects_truncated_payload()
+    {
         let payload = vec![0x0a, 0x0b, 0x0c];
         let mut encoded = encode_qcloud_frame(MSG_TYPE_PAYLOAD, &payload);
         encoded.truncate(encoded.len() - 1);
@@ -1025,7 +1111,8 @@ mod tests {
     }
 
     #[test]
-    fn cloud_payload_proto_roundtrip() {
+    fn cloud_payload_proto_roundtrip()
+    {
         let payload = CloudPayload {
             msg_id: Some(12),
             msg_date: Some(34),
@@ -1051,7 +1138,8 @@ mod tests {
     /// could spin forever at base backoff against a host that always rejects
     /// the session-level join.
     #[tokio::test]
-    async fn handle_reconnect_delay_caps_attempts_at_max() {
+    async fn handle_reconnect_delay_caps_attempts_at_max()
+    {
         let (events_tx, mut events_rx) = broadcast::channel::<TransportEvent>(64);
         let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
@@ -1063,7 +1151,8 @@ mod tests {
 
         // First three attempts schedule a reconnect, ramping the backoff and
         // never resetting the counter.
-        for expected_attempt in 1..=3u32 {
+        for expected_attempt in 1..=3u32
+        {
             let outcome = handle_reconnect_delay(
                 &events_tx,
                 &mut shutdown_rx,
@@ -1080,9 +1169,12 @@ mod tests {
 
         // Drain the three ReconnectScheduled events, asserting the attempt
         // counter monotonically increases (i.e. is NOT reset between calls).
-        for expected_attempt in 1..=3u32 {
-            match events_rx.recv().await.expect("event") {
-                TransportEvent::ReconnectScheduled { attempt, .. } => {
+        for expected_attempt in 1..=3u32
+        {
+            match events_rx.recv().await.expect("event")
+            {
+                TransportEvent::ReconnectScheduled { attempt, .. } =>
+                {
                     assert_eq!(attempt, expected_attempt);
                 }
                 other => panic!("expected ReconnectScheduled, got {other:?}"),
@@ -1105,11 +1197,13 @@ mod tests {
         assert_eq!(outcome, ReconnectOutcome::Exhausted);
         assert_eq!(attempt, 4);
 
-        match events_rx.recv().await.expect("event") {
+        match events_rx.recv().await.expect("event")
+        {
             TransportEvent::MaxReconnectAttemptsExceeded {
                 attempts,
                 last_reason,
-            } => {
+            } =>
+            {
                 assert_eq!(attempts, 4);
                 assert_eq!(last_reason, "test_reason");
             }
@@ -1120,14 +1214,16 @@ mod tests {
     /// `reconnect_max_attempts = None` preserves the legacy unbounded
     /// behavior used by tests / non-Qobuz endpoints.
     #[tokio::test]
-    async fn handle_reconnect_delay_unbounded_when_max_attempts_is_none() {
+    async fn handle_reconnect_delay_unbounded_when_max_attempts_is_none()
+    {
         let (events_tx, _events_rx) = broadcast::channel::<TransportEvent>(16);
         let (_shutdown_tx, mut shutdown_rx) = watch::channel(false);
 
         let mut attempt: u32 = 0;
         let mut backoff: u64 = 1;
 
-        for _ in 0..5 {
+        for _ in 0..5
+        {
             let outcome = handle_reconnect_delay(
                 &events_tx,
                 &mut shutdown_rx,

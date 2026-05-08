@@ -4,7 +4,8 @@
 pub const BASE_URL: &str = "https://www.qobuz.com/api.json/0.2";
 
 /// Endpoint paths
-pub mod paths {
+pub mod paths
+{
     // User
     pub const USER_LOGIN: &str = "/user/login";
 
@@ -94,6 +95,7 @@ pub mod paths {
 }
 
 /// Build full URL for an endpoint
-pub fn build_url(endpoint: &str) -> String {
+pub fn build_url(endpoint: &str) -> String
+{
     format!("{}{}", BASE_URL, endpoint)
 }

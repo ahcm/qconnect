@@ -12,45 +12,72 @@ use super::types::{Playlist, SearchResults, UserSession};
 /// All events emitted by QBZ core to frontends
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", content = "data")]
-pub enum CoreEvent {
+pub enum CoreEvent
+{
     // ============ Playback Events ============
     /// Track started playing
-    TrackStarted {
+    TrackStarted
+    {
         track: QueueTrack,
         position_secs: u64,
     },
 
     /// Playback state changed (play/pause/stop)
-    PlaybackStateChanged { state: PlaybackState },
+    PlaybackStateChanged
+    {
+        state: PlaybackState
+    },
 
     /// Playback position updated (periodic, e.g., every second)
-    PositionUpdated {
+    PositionUpdated
+    {
         position_secs: u64,
         duration_secs: u64,
     },
 
     /// Track finished playing naturally
-    TrackEnded { track_id: u64 },
+    TrackEnded
+    {
+        track_id: u64
+    },
 
     /// Volume changed
-    VolumeChanged { volume: f32 },
+    VolumeChanged
+    {
+        volume: f32
+    },
 
     /// Full playback status update
-    PlaybackStatusUpdated { status: PlaybackStatus },
+    PlaybackStatusUpdated
+    {
+        status: PlaybackStatus
+    },
 
     // ============ Queue Events ============
     /// Queue state changed (tracks added/removed/reordered)
-    QueueUpdated { state: QueueState },
+    QueueUpdated
+    {
+        state: QueueState
+    },
 
     /// Shuffle mode changed
-    ShuffleChanged { enabled: bool },
+    ShuffleChanged
+    {
+        enabled: bool
+    },
 
     /// Repeat mode changed
-    RepeatModeChanged { mode: super::playback::RepeatMode },
+    RepeatModeChanged
+    {
+        mode: super::playback::RepeatMode
+    },
 
     // ============ Authentication Events ============
     /// User logged in successfully
-    LoggedIn { session: UserSession },
+    LoggedIn
+    {
+        session: UserSession
+    },
 
     /// User logged out
     LoggedOut,
@@ -60,36 +87,59 @@ pub enum CoreEvent {
 
     // ============ Library Events ============
     /// Favorites updated
-    FavoritesUpdated {
+    FavoritesUpdated
+    {
         /// Type of favorite that changed: "album", "track", or "artist"
         favorite_type: String,
     },
 
     /// Playlist created
-    PlaylistCreated { playlist: Playlist },
+    PlaylistCreated
+    {
+        playlist: Playlist
+    },
 
     /// Playlist updated (tracks added/removed)
-    PlaylistUpdated { playlist_id: u64 },
+    PlaylistUpdated
+    {
+        playlist_id: u64
+    },
 
     /// Playlist deleted
-    PlaylistDeleted { playlist_id: u64 },
+    PlaylistDeleted
+    {
+        playlist_id: u64
+    },
 
     // ============ Loading/Progress Events ============
     /// Loading started for an operation
-    LoadingStarted { operation: String },
+    LoadingStarted
+    {
+        operation: String
+    },
 
     /// Loading completed
-    LoadingCompleted { operation: String },
+    LoadingCompleted
+    {
+        operation: String
+    },
 
     /// Download progress for offline content
-    DownloadProgress { track_id: u64, progress_percent: u8 },
+    DownloadProgress
+    {
+        track_id: u64, progress_percent: u8
+    },
 
     /// Download completed
-    DownloadCompleted { track_id: u64 },
+    DownloadCompleted
+    {
+        track_id: u64
+    },
 
     // ============ Error Events ============
     /// An error occurred
-    Error {
+    Error
+    {
         code: String,
         message: String,
         /// Whether error is recoverable
@@ -97,38 +147,61 @@ pub enum CoreEvent {
     },
 
     /// Playback error (track couldn't play)
-    PlaybackError { track_id: u64, message: String },
+    PlaybackError
+    {
+        track_id: u64, message: String
+    },
 
     /// Network error
-    NetworkError { message: String },
+    NetworkError
+    {
+        message: String
+    },
 
     // ============ Audio System Events ============
     /// Audio device changed
-    AudioDeviceChanged { device_name: String },
+    AudioDeviceChanged
+    {
+        device_name: String
+    },
 
     /// Audio backend changed
-    AudioBackendChanged {
+    AudioBackendChanged
+    {
         /// Backend name: "pipewire", "alsa", "pulse"
         backend: String,
     },
 
     /// Audio system diagnostic info
-    AudioDiagnostic { message: String },
+    AudioDiagnostic
+    {
+        message: String
+    },
 
     // ============ Search Events ============
     /// Search results received
-    SearchResultsReceived {
+    SearchResultsReceived
+    {
         query: String,
         results: SearchResults,
     },
 
     // ============ Navigation Hints ============
     /// Suggest navigation to album
-    NavigateToAlbum { album_id: String },
+    NavigateToAlbum
+    {
+        album_id: String
+    },
 
     /// Suggest navigation to artist
-    NavigateToArtist { artist_id: u64 },
+    NavigateToArtist
+    {
+        artist_id: u64
+    },
 
     /// Suggest navigation to playlist
-    NavigateToPlaylist { playlist_id: u64 },
+    NavigateToPlaylist
+    {
+        playlist_id: u64
+    },
 }

@@ -4,17 +4,17 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::player::AudioPlayer;
-use crate::app_types::*;
 use crate::app_logic::QconnectApp;
+use crate::app_types::*;
+use crate::models::{Quality, Track};
+use crate::player::AudioPlayer;
+use crate::qobuz::{QobuzClient, cmaf_download_full};
+use crate::transport::QueueItem;
+use crate::transport::{NativeWsTransport, TransportEvent, WsTransportConfig};
 use anyhow::{Context, Result, anyhow, bail};
 use async_trait::async_trait;
 use cacache;
 use moka::future::Cache;
-use crate::models::{Quality, Track};
-use crate::qobuz::{QobuzClient, cmaf_download_full};
-use crate::transport::queue::QueueItem;
-use crate::transport::{NativeWsTransport, TransportEvent, WsTransportConfig};
 use serde_json::{Value, json};
 use souvlaki::{
     MediaControlEvent, MediaControls, MediaMetadata, MediaPlayback, MediaPosition, PlatformConfig,
@@ -379,24 +379,36 @@ impl QconnectClient
                 let renderer = app.renderer_state_snapshot().await;
 
                 // Priority 1: Local queue item ID
-                let mut report_current_track = playback.queue_item_id.and_then(|id| queue_item_by_id(&queue, id));
-                
-                // Priority 2: If we have track_id but not queue_item_id (or queue is stale), 
+                let mut report_current_track = playback
+                    .queue_item_id
+                    .and_then(|id| queue_item_by_id(&queue, id));
+
+                // Priority 2: If we have track_id but not queue_item_id (or queue is stale),
                 // try to find the track_id in the queue.
-                if report_current_track.is_none() {
-                    if let Some(track_id) = playback.track_id {
-                        report_current_track = queue.queue_items.iter().find(|it| it.track_id == track_id).cloned();
+                if report_current_track.is_none()
+                {
+                    if let Some(track_id) = playback.track_id
+                    {
+                        report_current_track = queue
+                            .queue_items
+                            .iter()
+                            .find(|it| it.track_id == track_id)
+                            .cloned();
                     }
                 }
 
                 // Priority 3: Only if the player has NO track info, fallback to server's idea of current track
-                if report_current_track.is_none() && playback.track_id.is_none() {
+                if report_current_track.is_none() && playback.track_id.is_none()
+                {
                     report_current_track = renderer.current_track.clone();
                 }
 
                 if playback.track_id.is_some() && report_current_track.is_none()
                 {
-                    log::debug!("Skipping report: player has track {:?}, but couldn't find a corresponding queue item", playback.track_id);
+                    log::debug!(
+                        "Skipping report: player has track {:?}, but couldn't find a corresponding queue item",
+                        playback.track_id
+                    );
                     continue;
                 }
 
@@ -412,8 +424,11 @@ impl QconnectClient
                     {
                         if Some(current_queue_item_id) != advanced_from_queue_item_id
                         {
-                            log::info!("Track {:?} finished, attempting to advance from queue item {}", 
-                                playback.track_id, current_queue_item_id);
+                            log::info!(
+                                "Track {:?} finished, attempting to advance from queue item {}",
+                                playback.track_id,
+                                current_queue_item_id
+                            );
                             advanced_from_queue_item_id = Some(current_queue_item_id);
                             let target =
                                 adjacent_queue_item_from(&app, current_queue_item_id, 1).await;
@@ -432,7 +447,10 @@ impl QconnectClient
                             }
                             else
                             {
-                                log::warn!("No next track found in queue after item {}", current_queue_item_id);
+                                log::warn!(
+                                    "No next track found in queue after item {}",
+                                    current_queue_item_id
+                                );
                             }
                         }
                     }
@@ -442,16 +460,13 @@ impl QconnectClient
                     advanced_from_queue_item_id = None;
                 }
 
-                if playback.playing_state == PLAYING_STATE_PLAYING && !playback.finished
-                {
-                    sink.ensure_preloaded(report_next_track.clone()).await;
-                }
-
                 let current_queue_item_id = report_current_track
                     .as_ref()
                     .and_then(|track| i32::try_from(track.queue_item_id).ok());
 
-                if playback.playing_state == PLAYING_STATE_PLAYING && current_queue_item_id.is_none() {
+                if playback.playing_state == PLAYING_STATE_PLAYING
+                    && current_queue_item_id.is_none()
+                {
                     log::debug!("Suppressing report for playing state with no queue item ID");
                     continue;
                 }
@@ -1335,11 +1350,11 @@ fn update_mpris_metadata(controls: &Arc<StdMutex<MediaControls>>, track: &Track)
         .as_ref()
         .map(|artist| artist.name.as_str())
         .unwrap_or("");
-    let album = track
-        .album
-        .as_ref()
-        .map(|album| album.title.as_str())
-        .unwrap_or("");
+    let album_summary = track.album.as_ref();
+    let album = album_summary.map(|a| a.title.as_str()).unwrap_or("");
+    let cover_url = album_summary
+        .and_then(|a| a.image.best())
+        .map(|s| s.as_str());
 
     if let Ok(mut controls) = controls.lock()
     {
@@ -1347,6 +1362,7 @@ fn update_mpris_metadata(controls: &Arc<StdMutex<MediaControls>>, track: &Track)
             title: Some(title),
             artist: Some(artist),
             album: Some(album),
+            cover_url,
             duration: Some(Duration::from_secs(track.duration as u64)),
             ..Default::default()
         });
@@ -1529,7 +1545,7 @@ async fn send_mpris_player_state(
     let queue = app.queue_state_snapshot().await;
     let has_explicit_target = target_track.is_some();
     let current_track = target_track.or(renderer.current_track);
-    
+
     let current_position = if has_explicit_target
     {
         Some(0)
@@ -1551,7 +1567,8 @@ async fn send_mpris_player_state(
         })
     });
 
-    if playing_state == PLAYING_STATE_PLAYING && current_queue_item.is_none() {
+    if playing_state == PLAYING_STATE_PLAYING && current_queue_item.is_none()
+    {
         log::debug!("Suppressing MPRIS state report: playing but no current track known");
         return Ok(());
     }
@@ -1570,7 +1587,6 @@ async fn send_mpris_player_state(
     clear_pending_if_matches(app, &action_uuid).await;
     Ok(())
 }
-
 
 struct TrackCache
 {
@@ -1739,12 +1755,6 @@ impl AudioPlayback
                             json!({ "error": err, "track_id": track.track_id }),
                         );
                     }
-                    else
-                    {
-                        // Seek successful - report new position to server
-                        // Note: We can't call report_position here because we don't have access to app/QconnectClient
-                        // The position will be reported by the periodic reporter
-                    }
                 }
             }
             if let Err(err) = self.player.resume()
@@ -1758,6 +1768,21 @@ impl AudioPlayback
                 self.ensure_preloaded(next_track, max_audio_quality).await;
             }
             return;
+        }
+
+        // The player may have already gaplessly advanced to next_track while the server still
+        // sends the previous track as current_track. Don't restart the previous track — the
+        // server heartbeat will catch up once we report the new position.
+        if let Some(ref nt) = next_track
+        {
+            if current.queue_item_id == nt.queue_item_id && self.player.has_loaded_audio()
+            {
+                self.printer.event(
+                    "audio_gapless_advanced",
+                    json!({ "track_id": nt.track_id, "queue_item_id": nt.queue_item_id }),
+                );
+                return;
+            }
         }
 
         self.replace_loading_task(track, next_track, position_ms, quality)
@@ -1774,6 +1799,7 @@ impl AudioPlayback
         {
             let event = self.player.get_playback_event();
             if event.gapless_next_queue_item_id == 0
+                && event.queue_item_id != next_track.queue_item_id
             {
                 let key = format!("{}_{}", next_track.track_id, quality.label());
                 if let Some(data) = self.cache.get_cached(&key).await
@@ -1796,6 +1822,12 @@ impl AudioPlayback
                     }
                 }
             }
+            return;
+        }
+
+        let event = self.player.get_playback_event();
+        if event.queue_item_id == next_track.queue_item_id
+        {
             return;
         }
 
@@ -2228,7 +2260,26 @@ impl AudioPlayback
                     .as_ref()
                     .filter(|track| track.track_id == event.track_id)
             })
-            .cloned();
+            .cloned()
+            .or_else(|| {
+                // After gapless transition the player may have advanced to a track that is no
+                // longer in fallback.current_track / fallback.next_track (e.g. next_track was
+                // cleared by a server SetState without next_track). Synthesise a minimal
+                // QueueItem from the player's own state so the state reporter can still locate
+                // the track in the queue and trigger preloading of the following track.
+                if event.queue_item_id != 0 && event.track_id != 0
+                {
+                    Some(QueueItem {
+                        track_context_uuid: String::new(),
+                        track_id: event.track_id,
+                        queue_item_id: event.queue_item_id,
+                    })
+                }
+                else
+                {
+                    None
+                }
+            });
 
         if event_queue_item.is_none()
         {
@@ -2271,7 +2322,8 @@ impl AudioPlayback
             && fallback.playing_state == PLAYING_STATE_PLAYING
             && event.duration > 0
             && event.position >= event.duration
-            && Some(event.queue_item_id) == fallback.current_track.as_ref().map(|t| t.queue_item_id);
+            && Some(event.queue_item_id)
+                == fallback.current_track.as_ref().map(|t| t.queue_item_id);
 
         log::debug!(
             "Finished check: not_playing={}, was_playing={}, has_duration={}, pos_gt_dur={} (position={}s, duration={}s)",
@@ -2467,26 +2519,6 @@ impl CliEventSink
         snapshot
     }
 
-    async fn ensure_preloaded(&self, next_track: Option<QueueItem>)
-    {
-        let Some(audio) = &self.audio
-        else
-        {
-            return;
-        };
-        let Some(next_track) = next_track
-        else
-        {
-            return;
-        };
-        let max_audio_quality = {
-            let mut playback = self.playback.lock().await;
-            playback.next_track = Some(next_track.clone());
-            playback.max_audio_quality
-        };
-        audio.ensure_preloaded(next_track, max_audio_quality).await;
-    }
-
     async fn play_local_track(&self, current_track: QueueItem, next_track: Option<QueueItem>)
     {
         let command = RendererCommand::SetState {
@@ -2536,12 +2568,7 @@ impl QconnectEventSink for CliEventSink
             QconnectAppEvent::RendererCommandApplied { command } =>
             {
                 self.apply_renderer_command(&command).await;
-                self.printer.event(
-                    "applied renderer_command",
-                    json!({
-                        "command": format!("{command:?}")
-                    }),
-                );
+                println!("applied renderer_command {command}");
             }
             QconnectAppEvent::RendererUpdated(renderer) =>
             {

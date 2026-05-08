@@ -1,10 +1,11 @@
 #![allow(dead_code)]
-use crate::transport::queue::QueueVersion;
+use crate::transport::QueueVersion;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum QueueEventType {
+pub enum QueueEventType
+{
     SrvrCtrlQueueState,
     SrvrCtrlQueueTracksAdded,
     SrvrCtrlQueueTracksLoaded,
@@ -33,9 +34,12 @@ pub enum QueueEventType {
     SrvrCtrlDeviceAudioQualityChanged,
 }
 
-impl QueueEventType {
-    pub const fn as_message_type(self) -> &'static str {
-        match self {
+impl QueueEventType
+{
+    pub const fn as_message_type(self) -> &'static str
+    {
+        match self
+        {
             Self::SrvrCtrlQueueState => "MESSAGE_TYPE_SRVR_CTRL_QUEUE_STATE",
             Self::SrvrCtrlQueueTracksAdded => "MESSAGE_TYPE_SRVR_CTRL_QUEUE_TRACKS_ADDED",
             Self::SrvrCtrlQueueTracksLoaded => "MESSAGE_TYPE_SRVR_CTRL_QUEUE_TRACKS_LOADED",
@@ -47,7 +51,8 @@ impl QueueEventType {
             Self::SrvrCtrlAutoplayModeSet => "MESSAGE_TYPE_SRVR_CTRL_AUTOPLAY_MODE_SET",
             Self::SrvrCtrlAutoplayTracksLoaded => "MESSAGE_TYPE_SRVR_CTRL_AUTOPLAY_TRACKS_LOADED",
             Self::SrvrCtrlAutoplayTracksRemoved => "MESSAGE_TYPE_SRVR_CTRL_AUTOPLAY_TRACKS_REMOVED",
-            Self::SrvrCtrlQueueTracksAddedFromAutoplay => {
+            Self::SrvrCtrlQueueTracksAddedFromAutoplay =>
+            {
                 "MESSAGE_TYPE_SRVR_CTRL_QUEUE_TRACKS_ADDED_FROM_AUTOPLAY"
             }
             Self::SrvrCtrlQueueErrorMessage => "MESSAGE_TYPE_SRVR_CTRL_QUEUE_ERROR_MESSAGE",
@@ -60,23 +65,28 @@ impl QueueEventType {
             Self::SrvrCtrlVolumeChanged => "MESSAGE_TYPE_SRVR_CTRL_VOLUME_CHANGED",
             Self::SrvrCtrlLoopModeSet => "MESSAGE_TYPE_SRVR_CTRL_LOOP_MODE_SET",
             Self::SrvrCtrlVolumeMuted => "MESSAGE_TYPE_SRVR_CTRL_VOLUME_MUTED",
-            Self::SrvrCtrlMaxAudioQualityChanged => {
+            Self::SrvrCtrlMaxAudioQualityChanged =>
+            {
                 "MESSAGE_TYPE_SRVR_CTRL_MAX_AUDIO_QUALITY_CHANGED"
             }
-            Self::SrvrCtrlFileAudioQualityChanged => {
+            Self::SrvrCtrlFileAudioQualityChanged =>
+            {
                 "MESSAGE_TYPE_SRVR_CTRL_FILE_AUDIO_QUALITY_CHANGED"
             }
-            Self::SrvrCtrlDeviceAudioQualityChanged => {
+            Self::SrvrCtrlDeviceAudioQualityChanged =>
+            {
                 "MESSAGE_TYPE_SRVR_CTRL_DEVICE_AUDIO_QUALITY_CHANGED"
             }
         }
     }
 }
 
-impl QueueEventType {
+impl QueueEventType
+{
     /// Returns true for session management events that should NOT go through
     /// the queue reducer.
-    pub const fn is_session_management(self) -> bool {
+    pub const fn is_session_management(self) -> bool
+    {
         matches!(
             self,
             Self::SrvrCtrlSessionState
@@ -96,7 +106,8 @@ impl QueueEventType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueServerEvent {
+pub struct QueueServerEvent
+{
     pub event_type: QueueEventType,
     pub action_uuid: Option<String>,
     pub queue_version: Option<QueueVersion>,
@@ -104,8 +115,10 @@ pub struct QueueServerEvent {
     pub payload: Value,
 }
 
-impl QueueServerEvent {
-    pub const fn message_type(&self) -> &'static str {
+impl QueueServerEvent
+{
+    pub const fn message_type(&self) -> &'static str
+    {
         self.event_type.as_message_type()
     }
 }

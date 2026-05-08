@@ -10,13 +10,16 @@ use serde::{Deserialize, Serialize};
 
 /// A performer with their name and roles
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Performer {
+pub struct Performer
+{
     pub name: String,
     pub roles: Vec<String>,
 }
 
-impl Performer {
-    pub fn new(name: String, roles: Vec<String>) -> Self {
+impl Performer
+{
+    pub fn new(name: String, roles: Vec<String>) -> Self
+    {
         Self { name, roles }
     }
 }
@@ -35,8 +38,10 @@ impl Performer {
 /// assert_eq!(performers[0].name, "John Coltrane");
 /// assert_eq!(performers[0].roles, vec!["Saxophone", "MainArtist"]);
 /// ```
-pub fn parse_performers(performers_str: &str) -> Vec<Performer> {
-    if performers_str.is_empty() {
+pub fn parse_performers(performers_str: &str) -> Vec<Performer>
+{
+    if performers_str.is_empty()
+    {
         return Vec::new();
     }
 
@@ -44,17 +49,20 @@ pub fn parse_performers(performers_str: &str) -> Vec<Performer> {
         .split(" - ")
         .filter_map(|segment| {
             let segment = segment.trim();
-            if segment.is_empty() {
+            if segment.is_empty()
+            {
                 return None;
             }
 
             let parts: Vec<&str> = segment.split(", ").collect();
-            if parts.is_empty() {
+            if parts.is_empty()
+            {
                 return None;
             }
 
             let name = parts[0].trim().to_string();
-            if name.is_empty() {
+            if name.is_empty()
+            {
                 return None;
             }
 
@@ -72,12 +80,15 @@ pub fn parse_performers(performers_str: &str) -> Vec<Performer> {
 /// Group performers by their roles
 ///
 /// Returns a map where keys are role names and values are lists of performer names
-pub fn group_by_role(performers: &[Performer]) -> std::collections::HashMap<String, Vec<String>> {
+pub fn group_by_role(performers: &[Performer]) -> std::collections::HashMap<String, Vec<String>>
+{
     let mut grouped: std::collections::HashMap<String, Vec<String>> =
         std::collections::HashMap::new();
 
-    for performer in performers {
-        for role in &performer.roles {
+    for performer in performers
+    {
+        for role in &performer.roles
+        {
             grouped
                 .entry(role.clone())
                 .or_default()
@@ -89,11 +100,13 @@ pub fn group_by_role(performers: &[Performer]) -> std::collections::HashMap<Stri
 }
 
 #[cfg(test)]
-mod tests {
+mod tests
+{
     use super::*;
 
     #[test]
-    fn test_parse_single_performer() {
+    fn test_parse_single_performer()
+    {
         let result = parse_performers("John Coltrane, Saxophone");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "John Coltrane");
@@ -101,7 +114,8 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_multiple_performers() {
+    fn test_parse_multiple_performers()
+    {
         let result = parse_performers(
             "John Coltrane, Saxophone, MainArtist - McCoy Tyner, Piano - Elvin Jones, Drums",
         );
@@ -115,13 +129,15 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_empty_string() {
+    fn test_parse_empty_string()
+    {
         let result = parse_performers("");
         assert!(result.is_empty());
     }
 
     #[test]
-    fn test_parse_performer_no_roles() {
+    fn test_parse_performer_no_roles()
+    {
         let result = parse_performers("John Coltrane");
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].name, "John Coltrane");
@@ -129,13 +145,11 @@ mod tests {
     }
 
     #[test]
-    fn test_group_by_role() {
+    fn test_group_by_role()
+    {
         let performers = vec![
             Performer::new("John".to_string(), vec!["Saxophone".to_string()]),
-            Performer::new(
-                "Jane".to_string(),
-                vec!["Saxophone".to_string(), "Vocals".to_string()],
-            ),
+            Performer::new("Jane".to_string(), vec!["Saxophone".to_string(), "Vocals".to_string()]),
         ];
         let grouped = group_by_role(&performers);
         assert_eq!(grouped.get("Saxophone").unwrap().len(), 2);

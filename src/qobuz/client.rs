@@ -10,7 +10,7 @@ use super::auth::{
     get_timestamp, parse_login_response, sign_file_url, sign_get_favorites, sign_get_file_url,
     sign_request, sign_search, sign_session_start,
 };
-use super::bundle::{extract_bundle_tokens, BundleTokens};
+use super::bundle::{BundleTokens, extract_bundle_tokens};
 use super::endpoints::{self, paths};
 use super::error::{ApiError, Result};
 use crate::models::*;
@@ -18,14 +18,16 @@ use crate::models::*;
 const USER_AGENT: &str = "Mozilla/5.0 (X11; Linux x86_64; rv:120.0) Gecko/20100101 Firefox/120.0";
 
 /// CMAF session state (session/start + infos for key derivation)
-struct CmafSession {
+struct CmafSession
+{
     session_id: String,
     infos: String,
     expires_at: u64,
 }
 
 /// Qobuz API client
-pub struct QobuzClient {
+pub struct QobuzClient
+{
     http: Client,
     tokens: Arc<RwLock<Option<BundleTokens>>>,
     session: Arc<RwLock<Option<UserSession>>>,
@@ -34,8 +36,10 @@ pub struct QobuzClient {
     cmaf_session: Arc<RwLock<Option<CmafSession>>>,
 }
 
-impl Clone for QobuzClient {
-    fn clone(&self) -> Self {
+impl Clone for QobuzClient
+{
+    fn clone(&self) -> Self
+    {
         Self {
             http: self.http.clone(),
             tokens: Arc::clone(&self.tokens),
@@ -47,9 +51,11 @@ impl Clone for QobuzClient {
     }
 }
 
-impl QobuzClient {
+impl QobuzClient
+{
     /// Create a new client
-    pub fn new() -> Result<Self> {
+    pub fn new() -> Result<Self>
+    {
         let http = Client::builder()
             .user_agent(USER_AGENT)
             .cookie_store(true)
@@ -66,29 +72,34 @@ impl QobuzClient {
     }
 
     /// Initialize client by extracting bundle tokens
-    pub async fn init(&self) -> Result<()> {
+    pub async fn init(&self) -> Result<()>
+    {
         let tokens = extract_bundle_tokens(&self.http).await?;
         *self.tokens.write().await = Some(tokens);
         Ok(())
     }
 
     /// Set the locale for API requests
-    pub async fn set_locale(&self, locale: String) {
+    pub async fn set_locale(&self, locale: String)
+    {
         *self.locale.write().await = locale;
     }
 
     /// Get the current locale (public for cache key generation)
-    pub async fn get_locale(&self) -> String {
+    pub async fn get_locale(&self) -> String
+    {
         self.locale.read().await.clone()
     }
 
     /// Get the current locale (internal use)
-    async fn locale(&self) -> String {
+    async fn locale(&self) -> String
+    {
         self.locale.read().await.clone()
     }
 
     /// Get app ID (public for catalog search)
-    pub async fn app_id(&self) -> Result<String> {
+    pub async fn app_id(&self) -> Result<String>
+    {
         self.tokens
             .read()
             .await
@@ -98,14 +109,17 @@ impl QobuzClient {
     }
 
     /// Get HTTP client reference (public for catalog search)
-    pub fn get_http(&self) -> &Client {
+    pub fn get_http(&self) -> &Client
+    {
         &self.http
     }
 
     /// Get validated secret (validates on first use)
-    async fn secret(&self) -> Result<String> {
+    async fn secret(&self) -> Result<String>
+    {
         // Check if we already have a validated secret
-        if let Some(secret) = self.validated_secret.read().await.clone() {
+        if let Some(secret) = self.validated_secret.read().await.clone()
+        {
             return Ok(secret);
         }
 
@@ -115,8 +129,10 @@ impl QobuzClient {
             .as_ref()
             .ok_or_else(|| ApiError::BundleExtractionError("Client not initialized".to_string()))?;
 
-        for secret in &tokens.secrets {
-            if self.test_secret(secret).await? {
+        for secret in &tokens.secrets
+        {
+            if self.test_secret(secret).await?
+            {
                 *self.validated_secret.write().await = Some(secret.clone());
                 return Ok(secret.clone());
             }
@@ -126,7 +142,8 @@ impl QobuzClient {
     }
 
     /// Test if a secret is valid using a known track
-    async fn test_secret(&self, secret: &str) -> Result<bool> {
+    async fn test_secret(&self, secret: &str) -> Result<bool>
+    {
         let test_track_id = 5966783u64; // Known test track
         let timestamp = get_timestamp();
         let signature = sign_get_file_url(test_track_id, 5, timestamp, secret);
@@ -150,7 +167,8 @@ impl QobuzClient {
     }
 
     /// Login with email and password
-    pub async fn login(&self, email: &str, password: &str) -> Result<UserSession> {
+    pub async fn login(&self, email: &str, password: &str) -> Result<UserSession>
+    {
         let url = endpoints::build_url(paths::USER_LOGIN);
         let response = self
             .http
@@ -160,37 +178,40 @@ impl QobuzClient {
             .send()
             .await?;
 
-        match response.status() {
-            StatusCode::OK => {
+        match response.status()
+        {
+            StatusCode::OK =>
+            {
                 let json: Value = response.json().await?;
                 let session = parse_login_response(&json)?;
                 *self.session.write().await = Some(session.clone());
                 Ok(session)
             }
-            StatusCode::UNAUTHORIZED => Err(ApiError::AuthenticationError(
-                "Invalid credentials".to_string(),
-            )),
+            StatusCode::UNAUTHORIZED =>
+            {
+                Err(ApiError::AuthenticationError("Invalid credentials".to_string()))
+            }
             StatusCode::BAD_REQUEST => Err(ApiError::InvalidAppId),
-            status => Err(ApiError::ApiResponse(format!(
-                "Unexpected status: {}",
-                status
-            ))),
+            status => Err(ApiError::ApiResponse(format!("Unexpected status: {}", status))),
         }
     }
 
     /// Check if logged in
-    pub async fn is_logged_in(&self) -> bool {
+    pub async fn is_logged_in(&self) -> bool
+    {
         self.session.read().await.is_some()
     }
 
     /// Logout - clear the session
-    pub async fn logout(&self) {
+    pub async fn logout(&self)
+    {
         *self.session.write().await = None;
     }
 
     /// Inject an already-authenticated session (e.g. from OAuth flow).
     /// Use this when the session was obtained outside this client instance.
-    pub async fn set_session(&self, session: UserSession) {
+    pub async fn set_session(&self, session: UserSession)
+    {
         *self.session.write().await = Some(session);
     }
 
@@ -199,7 +220,8 @@ impl QobuzClient {
     /// This implements the new Qobuz OAuth flow:
     /// 1. GET /oauth/callback?code=CODE&private_key=KEY → { token }
     /// 2. POST /user/login with X-User-Auth-Token: token, body=extra=partner → UserSession
-    pub async fn login_with_oauth_code(&self, code: &str) -> Result<UserSession> {
+    pub async fn login_with_oauth_code(&self, code: &str) -> Result<UserSession>
+    {
         use reqwest::header::{HeaderMap, HeaderValue};
 
         let tokens = self.tokens.read().await;
@@ -233,7 +255,8 @@ impl QobuzClient {
             .send()
             .await?;
 
-        if !callback_response.status().is_success() {
+        if !callback_response.status().is_success()
+        {
             return Err(ApiError::ApiResponse(format!(
                 "OAuth callback failed with status {}",
                 callback_response.status()
@@ -272,17 +295,20 @@ impl QobuzClient {
             .send()
             .await?;
 
-        match login_response.status() {
-            StatusCode::OK => {
+        match login_response.status()
+        {
+            StatusCode::OK =>
+            {
                 let json: serde_json::Value = login_response.json().await?;
                 let session = super::auth::parse_login_response(&json)?;
                 *self.session.write().await = Some(session.clone());
                 log::info!("[OAuth] Session established");
                 Ok(session)
             }
-            StatusCode::UNAUTHORIZED => Err(ApiError::AuthenticationError(
-                "OAuth token rejected by user/login".to_string(),
-            )),
+            StatusCode::UNAUTHORIZED =>
+            {
+                Err(ApiError::AuthenticationError("OAuth token rejected by user/login".to_string()))
+            }
             status => Err(ApiError::ApiResponse(format!(
                 "user/login OAuth step failed with status {}",
                 status
@@ -295,7 +321,8 @@ impl QobuzClient {
     /// Used at startup when the user logged in via OAuth (web browser) and the
     /// token was persisted. Calls POST /user/login with X-User-Auth-Token header.
     /// Returns an error if the token has expired.
-    pub async fn login_with_token(&self, token: &str) -> Result<UserSession> {
+    pub async fn login_with_token(&self, token: &str) -> Result<UserSession>
+    {
         use reqwest::header::{HeaderMap, HeaderValue};
 
         let tokens = self.tokens.read().await;
@@ -328,26 +355,27 @@ impl QobuzClient {
             .send()
             .await?;
 
-        match resp.status() {
-            StatusCode::OK => {
+        match resp.status()
+        {
+            StatusCode::OK =>
+            {
                 let json: serde_json::Value = resp.json().await?;
                 let session = super::auth::parse_login_response(&json)?;
                 *self.session.write().await = Some(session.clone());
                 log::info!("[OAuth] Session restored from token");
                 Ok(session)
             }
-            StatusCode::UNAUTHORIZED => Err(ApiError::AuthenticationError(
-                "OAuth token expired or invalid".to_string(),
-            )),
-            status => Err(ApiError::ApiResponse(format!(
-                "Token re-auth failed: {}",
-                status
-            ))),
+            StatusCode::UNAUTHORIZED =>
+            {
+                Err(ApiError::AuthenticationError("OAuth token expired or invalid".to_string()))
+            }
+            status => Err(ApiError::ApiResponse(format!("Token re-auth failed: {}", status))),
         }
     }
 
     /// Get current user info (display name, subscription, and expiry if available)
-    pub async fn get_user_info(&self) -> Option<(String, String, Option<String>)> {
+    pub async fn get_user_info(&self) -> Option<(String, String, Option<String>)>
+    {
         self.session.read().await.as_ref().map(|s| {
             (
                 s.display_name.clone(),
@@ -358,7 +386,8 @@ impl QobuzClient {
     }
 
     /// Get user auth token header value (public for catalog search)
-    pub async fn auth_token(&self) -> Result<String> {
+    pub async fn auth_token(&self) -> Result<String>
+    {
         self.session
             .read()
             .await
@@ -371,7 +400,8 @@ impl QobuzClient {
 
     /// Build standard API headers.
     /// Always includes X-App-Id. Includes X-User-Auth-Token when logged in.
-    async fn api_headers(&self) -> Result<reqwest::header::HeaderMap> {
+    async fn api_headers(&self) -> Result<reqwest::header::HeaderMap>
+    {
         use reqwest::header::{HeaderMap, HeaderValue};
         let mut headers = HeaderMap::new();
 
@@ -381,8 +411,10 @@ impl QobuzClient {
             HeaderValue::from_str(&app_id).map_err(|_| ApiError::InvalidAppId)?,
         );
 
-        if let Ok(token) = self.auth_token().await {
-            if let Ok(val) = HeaderValue::from_str(&token) {
+        if let Ok(token) = self.auth_token().await
+        {
+            if let Ok(val) = HeaderValue::from_str(&token)
+            {
                 headers.insert("X-User-Auth-Token", val);
             }
         }
@@ -391,7 +423,8 @@ impl QobuzClient {
     }
 
     /// Build headers that REQUIRE authentication. Fails if not logged in.
-    async fn authenticated_headers(&self) -> Result<reqwest::header::HeaderMap> {
+    async fn authenticated_headers(&self) -> Result<reqwest::header::HeaderMap>
+    {
         use reqwest::header::{HeaderMap, HeaderValue};
         let mut headers = HeaderMap::new();
 
@@ -419,7 +452,8 @@ impl QobuzClient {
         url: &str,
         method_name: &str,
         params: &[(&str, String)],
-    ) -> Result<reqwest::Response> {
+    ) -> Result<reqwest::Response>
+    {
         let timestamp = get_timestamp();
         let secret = self.secret().await?;
         let kv: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -446,7 +480,8 @@ impl QobuzClient {
         url: &str,
         method_name: &str,
         params: &[(&str, String)],
-    ) -> Result<reqwest::Response> {
+    ) -> Result<reqwest::Response>
+    {
         let timestamp = get_timestamp();
         let secret = self.secret().await?;
         let kv: Vec<(&str, &str)> = params.iter().map(|(k, v)| (*k, v.as_str())).collect();
@@ -477,11 +512,13 @@ impl QobuzClient {
         limit: u32,
         offset: u32,
         search_type: Option<&str>,
-    ) -> Result<SearchResultsPage<Album>> {
+    ) -> Result<SearchResultsPage<Album>>
+    {
         let url = endpoints::build_url(paths::ALBUM_SEARCH);
         let timestamp = get_timestamp();
         let secret = self.secret().await?;
-        let signature = sign_search("albumsearch", query, limit, offset, search_type, timestamp, &secret);
+        let signature =
+            sign_search("albumsearch", query, limit, offset, search_type, timestamp, &secret);
         let limit_str = limit.to_string();
         let offset_str = offset.to_string();
         let ts_str = timestamp.to_string();
@@ -494,7 +531,8 @@ impl QobuzClient {
             ("request_sig", &signature),
         ];
 
-        if let Some(st) = search_type {
+        if let Some(st) = search_type
+        {
             params.push(("type", st));
         }
 
@@ -523,11 +561,13 @@ impl QobuzClient {
         limit: u32,
         offset: u32,
         search_type: Option<&str>,
-    ) -> Result<SearchResultsPage<Track>> {
+    ) -> Result<SearchResultsPage<Track>>
+    {
         let url = endpoints::build_url(paths::TRACK_SEARCH);
         let timestamp = get_timestamp();
         let secret = self.secret().await?;
-        let signature = sign_search("tracksearch", query, limit, offset, search_type, timestamp, &secret);
+        let signature =
+            sign_search("tracksearch", query, limit, offset, search_type, timestamp, &secret);
         let limit_str = limit.to_string();
         let offset_str = offset.to_string();
         let ts_str = timestamp.to_string();
@@ -540,7 +580,8 @@ impl QobuzClient {
             ("request_sig", &signature),
         ];
 
-        if let Some(st) = search_type {
+        if let Some(st) = search_type
+        {
             params.push(("type", st));
         }
 
@@ -569,11 +610,13 @@ impl QobuzClient {
         limit: u32,
         offset: u32,
         search_type: Option<&str>,
-    ) -> Result<SearchResultsPage<Artist>> {
+    ) -> Result<SearchResultsPage<Artist>>
+    {
         let url = endpoints::build_url(paths::ARTIST_SEARCH);
         let timestamp = get_timestamp();
         let secret = self.secret().await?;
-        let signature = sign_search("artistsearch", query, limit, offset, search_type, timestamp, &secret);
+        let signature =
+            sign_search("artistsearch", query, limit, offset, search_type, timestamp, &secret);
         let limit_str = limit.to_string();
         let offset_str = offset.to_string();
         let ts_str = timestamp.to_string();
@@ -586,7 +629,8 @@ impl QobuzClient {
             ("request_sig", &signature),
         ];
 
-        if let Some(st) = search_type {
+        if let Some(st) = search_type
+        {
             params.push(("type", st));
         }
 
@@ -609,11 +653,13 @@ impl QobuzClient {
 
     /// Catalog search (combined: albums, tracks, artists, playlists, most_popular).
     /// Returns raw JSON for caller to parse — the response shape is complex.
-    pub async fn catalog_search(&self, query: &str, limit: u32, offset: u32) -> Result<Value> {
+    pub async fn catalog_search(&self, query: &str, limit: u32, offset: u32) -> Result<Value>
+    {
         let url = endpoints::build_url(paths::CATALOG_SEARCH);
         let timestamp = get_timestamp();
         let secret = self.secret().await?;
-        let signature = sign_search("catalogsearch", query, limit, offset, None, timestamp, &secret);
+        let signature =
+            sign_search("catalogsearch", query, limit, offset, None, timestamp, &secret);
         let limit_str = limit.to_string();
         let offset_str = offset.to_string();
         let ts_str = timestamp.to_string();
@@ -642,20 +688,21 @@ impl QobuzClient {
         artist_id: u64,
         limit: u32,
         offset: u32,
-    ) -> Result<SearchResultsPage<Artist>> {
+    ) -> Result<SearchResultsPage<Artist>>
+    {
         let url = endpoints::build_url(paths::ARTIST_GET_SIMILAR);
         let http_response = self
-            .signed_get(&url, "artistgetSimilarArtists", &[
-                ("artist_id", artist_id.to_string()),
-                ("limit", limit.to_string()),
-                ("offset", offset.to_string()),
-            ])
+            .signed_get(
+                &url,
+                "artistgetSimilarArtists",
+                &[
+                    ("artist_id", artist_id.to_string()),
+                    ("limit", limit.to_string()),
+                    ("offset", offset.to_string()),
+                ],
+            )
             .await?;
-        log::debug!(
-            "[API] get_similar_artists({}) status={}",
-            artist_id,
-            http_response.status()
-        );
+        log::debug!("[API] get_similar_artists({}) status={}", artist_id, http_response.status());
         let response: Value = http_response.json().await?;
 
         let artists = response
@@ -671,24 +718,25 @@ impl QobuzClient {
         artist_id: u64,
         limit: u32,
         offset: u32,
-    ) -> Result<TracksContainer> {
+    ) -> Result<TracksContainer>
+    {
         let url = endpoints::build_url(paths::ARTIST_GET);
         let locale = self.locale().await;
 
         let http_response = self
-            .signed_get(&url, "artistget", &[
-                ("artist_id", artist_id.to_string()),
-                ("extra", "tracks".to_string()),
-                ("lang", locale),
-                ("limit", limit.to_string()),
-                ("offset", offset.to_string()),
-            ])
+            .signed_get(
+                &url,
+                "artistget",
+                &[
+                    ("artist_id", artist_id.to_string()),
+                    ("extra", "tracks".to_string()),
+                    ("lang", locale),
+                    ("limit", limit.to_string()),
+                    ("offset", offset.to_string()),
+                ],
+            )
             .await?;
-        log::debug!(
-            "[API] get_artist_tracks({}) status={}",
-            artist_id,
-            http_response.status()
-        );
+        log::debug!("[API] get_artist_tracks({}) status={}", artist_id, http_response.status());
         let response: Value = http_response.json().await?;
 
         let tracks = response
@@ -701,7 +749,8 @@ impl QobuzClient {
     // === Get endpoints ===
 
     /// Get album by ID
-    pub async fn get_album(&self, album_id: &str) -> Result<Album> {
+    pub async fn get_album(&self, album_id: &str) -> Result<Album>
+    {
         let url = endpoints::build_url(paths::ALBUM_GET);
         let http_response = self
             .signed_get(&url, "albumget", &[("album_id", album_id.to_string())])
@@ -709,17 +758,13 @@ impl QobuzClient {
         let status = http_response.status();
         log::debug!("[API] get_album({}) status={}", album_id, status);
 
-        if status == StatusCode::NOT_FOUND {
-            log::warn!(
-                "[API] get_album({}) returned 404 — album not found",
-                album_id
-            );
-            return Err(ApiError::ApiResponse(format!(
-                "Album {} not found (404)",
-                album_id
-            )));
+        if status == StatusCode::NOT_FOUND
+        {
+            log::warn!("[API] get_album({}) returned 404 — album not found", album_id);
+            return Err(ApiError::ApiResponse(format!("Album {} not found (404)", album_id)));
         }
-        if !status.is_success() {
+        if !status.is_success()
+        {
             log::error!("[API] get_album({}) unexpected status={}", album_id, status);
             return Err(ApiError::ApiResponse(format!(
                 "get_album({}) status {}",
@@ -738,7 +783,8 @@ impl QobuzClient {
         limit: u32,
         offset: u32,
         genre_id: Option<u64>,
-    ) -> Result<SearchResultsPage<Album>> {
+    ) -> Result<SearchResultsPage<Album>>
+    {
         let url = endpoints::build_url(paths::ALBUM_GET_FEATURED);
         let mut query = vec![
             ("type".to_string(), featured_type.to_string()),
@@ -746,14 +792,14 @@ impl QobuzClient {
             ("offset".to_string(), offset.to_string()),
         ];
 
-        if let Some(gid) = genre_id {
+        if let Some(gid) = genre_id
+        {
             query.push(("genre_id".to_string(), gid.to_string()));
         }
 
-        let params: Vec<(&str, String)> = query.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
-        let http_response = self
-            .signed_get(&url, "albumgetFeatured", &params)
-            .await?;
+        let params: Vec<(&str, String)> =
+            query.iter().map(|(k, v)| (k.as_str(), v.clone())).collect();
+        let http_response = self.signed_get(&url, "albumgetFeatured", &params).await?;
         log::debug!(
             "[API] get_featured_albums({}) status={}",
             featured_type,
@@ -780,7 +826,8 @@ impl QobuzClient {
         release_type: &str,
         limit: u32,
         offset: u32,
-    ) -> Result<SearchResultsPage<Album>> {
+    ) -> Result<SearchResultsPage<Album>>
+    {
         let url = endpoints::build_url(paths::FAVORITE_GET_NEW_RELEASES);
         let limit_str = limit.to_string();
         let offset_str = offset.to_string();
@@ -807,15 +854,13 @@ impl QobuzClient {
         );
 
         let body_text = http_response.text().await?;
-        if !status.is_success() {
+        if !status.is_success()
+        {
             log::warn!(
                 "[API] get_release_watch non-success body (first 400 chars): {}",
                 body_text.chars().take(400).collect::<String>()
             );
-            return Err(ApiError::ApiResponse(format!(
-                "get_release_watch status {}",
-                status
-            )));
+            return Err(ApiError::ApiResponse(format!("get_release_watch status {}", status)));
         }
 
         let response: Value = serde_json::from_str(&body_text)?;
@@ -834,14 +879,15 @@ impl QobuzClient {
         // "Unknown Artist". Backfill `artist` from `artists[0]` before
         // parsing so the existing deserializer just works.
         let mut items_value = response.get("items").cloned().unwrap_or(Value::Null);
-        if let Some(items_arr) = items_value.as_array_mut() {
-            for item in items_arr {
-                if let Some(obj) = item.as_object_mut() {
-                    let needs_backfill = obj
-                        .get("artist")
-                        .map(|v| v.is_null())
-                        .unwrap_or(true);
-                    if needs_backfill {
+        if let Some(items_arr) = items_value.as_array_mut()
+        {
+            for item in items_arr
+            {
+                if let Some(obj) = item.as_object_mut()
+                {
+                    let needs_backfill = obj.get("artist").map(|v| v.is_null()).unwrap_or(true);
+                    if needs_backfill
+                    {
                         if let Some(first_artist) = obj
                             .get("artists")
                             .and_then(|a| a.as_array())
@@ -868,11 +914,14 @@ impl QobuzClient {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        let total_hint = if has_more {
+        let total_hint = if has_more
+        {
             // We don't know the real total; signal "at least one more page"
             // by bumping past the items we have.
             offset + items.len() as u32 + 1
-        } else {
+        }
+        else
+        {
             offset + items.len() as u32
         };
 
@@ -885,23 +934,28 @@ impl QobuzClient {
     }
 
     /// Get list of genres
-    pub async fn get_genres(&self, parent_id: Option<u64>) -> Result<Vec<GenreInfo>> {
+    pub async fn get_genres(&self, parent_id: Option<u64>) -> Result<Vec<GenreInfo>>
+    {
         let url = endpoints::build_url(paths::GENRE_LIST);
         // Force English for consistent genre names across all user regions
         let mut query: Vec<(&str, String)> = vec![("lang", "en".to_string())];
 
-        if let Some(pid) = parent_id {
+        if let Some(pid) = parent_id
+        {
             query.push(("parent_id", pid.to_string()));
         }
 
         let http_response = self
-            .signed_get(&url, "genrelist", &query.iter().map(|(k, v)| (*k, v.clone())).collect::<Vec<_>>())
+            .signed_get(
+                &url,
+                "genrelist",
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect::<Vec<_>>(),
+            )
             .await?;
-        log::debug!(
-            "[API] get_genres(parent={:?}) status={}",
-            parent_id,
-            http_response.status()
-        );
+        log::debug!("[API] get_genres(parent={:?}) status={}", parent_id, http_response.status());
         let response: Value = http_response.json().await?;
 
         let genres = response
@@ -913,16 +967,17 @@ impl QobuzClient {
     }
 
     /// Get discover index (home page content: playlists, ideal discography, etc.)
-    pub async fn get_discover_index(
-        &self,
-        genre_ids: Option<Vec<u64>>,
-    ) -> Result<DiscoverResponse> {
+    pub async fn get_discover_index(&self, genre_ids: Option<Vec<u64>>)
+    -> Result<DiscoverResponse>
+    {
         let url = endpoints::build_url(paths::DISCOVER_INDEX);
         let mut query: Vec<(&str, String)> = vec![];
 
         // Add genre_ids as comma-separated list if provided
-        if let Some(gids) = genre_ids {
-            if !gids.is_empty() {
+        if let Some(gids) = genre_ids
+        {
+            if !gids.is_empty()
+            {
                 let ids_str = gids
                     .iter()
                     .map(|id| id.to_string())
@@ -933,21 +988,28 @@ impl QobuzClient {
         }
 
         let http_response = self
-            .signed_get_auth(&url, "discoverindex", &query.iter().map(|(k, v)| (*k, v.clone())).collect::<Vec<_>>())
+            .signed_get_auth(
+                &url,
+                "discoverindex",
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect::<Vec<_>>(),
+            )
             .await?;
         log::info!("[API] get_discover_index status={}", http_response.status());
         let response: Value = http_response.json().await?;
 
         // Debug: log the response structure
-        if let Some(obj) = response.as_object() {
-            log::info!(
-                "Discover API response keys: {:?}",
-                obj.keys().collect::<Vec<_>>()
-            );
-            if let Some(err) = obj.get("message") {
+        if let Some(obj) = response.as_object()
+        {
+            log::info!("Discover API response keys: {:?}", obj.keys().collect::<Vec<_>>());
+            if let Some(err) = obj.get("message")
+            {
                 log::error!("Discover API error: {:?}", err);
             }
-            if let Some(code) = obj.get("code") {
+            if let Some(code) = obj.get("code")
+            {
                 log::error!("Discover API error code: {:?}", code);
             }
         }
@@ -962,12 +1024,15 @@ impl QobuzClient {
         genre_ids: Option<Vec<u64>>,
         offset: u32,
         limit: u32,
-    ) -> Result<DiscoverData<DiscoverAlbum>> {
+    ) -> Result<DiscoverData<DiscoverAlbum>>
+    {
         let url = endpoints::build_url(endpoint);
         let mut query: Vec<(&str, String)> = vec![];
 
-        if let Some(gids) = genre_ids {
-            if !gids.is_empty() {
+        if let Some(gids) = genre_ids
+        {
+            if !gids.is_empty()
+            {
                 let ids_str = gids
                     .iter()
                     .map(|id| id.to_string())
@@ -983,13 +1048,16 @@ impl QobuzClient {
         // Derive method name from endpoint path: "/discover/newReleases" -> "discovernewReleases"
         let method_name = endpoint.replace('/', "").replace('.', "");
         let http_response = self
-            .signed_get_auth(&url, &method_name, &query.iter().map(|(k, v)| (*k, v.clone())).collect::<Vec<_>>())
+            .signed_get_auth(
+                &url,
+                &method_name,
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect::<Vec<_>>(),
+            )
             .await?;
-        log::info!(
-            "[API] get_discover_albums({}) status={}",
-            endpoint,
-            http_response.status()
-        );
+        log::info!("[API] get_discover_albums({}) status={}", endpoint, http_response.status());
         let response: serde_json::Value = http_response.json().await?;
 
         Ok(serde_json::from_value(response)?)
@@ -1003,18 +1071,22 @@ impl QobuzClient {
         genre_ids: Option<Vec<u64>>,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<DiscoverPlaylistsResponse> {
+    ) -> Result<DiscoverPlaylistsResponse>
+    {
         let url = endpoints::build_url(paths::DISCOVER_PLAYLISTS);
         let mut query: Vec<(&str, String)> = vec![];
 
         // Add tag filter if provided (e.g., "label", "partner")
-        if let Some(ref t) = tag {
+        if let Some(ref t) = tag
+        {
             query.push(("tags", t.clone()));
         }
 
         // Add genre_ids as comma-separated list if provided
-        if let Some(gids) = genre_ids {
-            if !gids.is_empty() {
+        if let Some(gids) = genre_ids
+        {
+            if !gids.is_empty()
+            {
                 let ids_str = gids
                     .iter()
                     .map(|id| id.to_string())
@@ -1032,15 +1104,18 @@ impl QobuzClient {
         let off = offset.unwrap_or(0);
         query.push(("offset", off.to_string()));
 
-        log::debug!(
-            "[API] get_discover_playlists URL: {} query: {:?}",
-            url,
-            query
-        );
+        log::debug!("[API] get_discover_playlists URL: {} query: {:?}", url, query);
 
         // First get raw JSON to debug structure
         let raw_response: serde_json::Value = self
-            .signed_get_auth(&url, "discoverplaylists", &query.iter().map(|(k, v)| (*k, v.clone())).collect::<Vec<_>>())
+            .signed_get_auth(
+                &url,
+                "discoverplaylists",
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect::<Vec<_>>(),
+            )
             .await?
             .json()
             .await?;
@@ -1063,21 +1138,17 @@ impl QobuzClient {
                 e
             })?;
 
-        log::debug!(
-            "[API] get_discover_playlists response: {} playlists",
-            response.items.len()
-        );
+        log::debug!("[API] get_discover_playlists response: {} playlists", response.items.len());
 
         Ok(response)
     }
 
     /// Get playlist tags with localized names
-    pub async fn get_playlist_tags(&self) -> Result<Vec<PlaylistTag>> {
+    pub async fn get_playlist_tags(&self) -> Result<Vec<PlaylistTag>>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_GET_TAGS);
 
-        let http_response = self
-            .signed_get_auth(&url, "playlistgetTags", &[])
-            .await?;
+        let http_response = self.signed_get_auth(&url, "playlistgetTags", &[]).await?;
         log::info!("[API] get_playlist_tags status={}", http_response.status());
 
         let raw: PlaylistTagsResponse = http_response.json().await?;
@@ -1117,7 +1188,8 @@ impl QobuzClient {
     }
 
     /// Get track by ID
-    pub async fn get_track(&self, track_id: u64) -> Result<Track> {
+    pub async fn get_track(&self, track_id: u64) -> Result<Track>
+    {
         let url = endpoints::build_url(paths::TRACK_GET);
         let http_response = self
             .signed_get(&url, "trackget", &[("track_id", track_id.to_string())])
@@ -1125,14 +1197,13 @@ impl QobuzClient {
         let status = http_response.status();
         log::debug!("[API] get_track({}) status={}", track_id, status);
 
-        if status == StatusCode::NOT_FOUND {
-            log::warn!(
-                "[API] get_track({}) returned 404 — track no longer available",
-                track_id
-            );
+        if status == StatusCode::NOT_FOUND
+        {
+            log::warn!("[API] get_track({}) returned 404 — track no longer available", track_id);
             return Err(ApiError::TrackUnavailable(track_id));
         }
-        if !status.is_success() {
+        if !status.is_success()
+        {
             log::error!("[API] get_track({}) unexpected status={}", track_id, status);
             return Err(ApiError::ApiResponse(format!(
                 "get_track({}) status {}",
@@ -1145,7 +1216,8 @@ impl QobuzClient {
     }
 
     /// Get artist by ID (basic info only - no albums, faster response)
-    pub async fn get_artist_basic(&self, artist_id: u64) -> Result<Artist> {
+    pub async fn get_artist_basic(&self, artist_id: u64) -> Result<Artist>
+    {
         let url = endpoints::build_url(paths::ARTIST_GET);
         let locale = self.locale().await;
         let query = vec![
@@ -1155,20 +1227,24 @@ impl QobuzClient {
         ];
 
         let http_response = self
-            .signed_get(&url, "artistget", &query.iter().map(|(k, v)| (*k, v.clone())).collect::<Vec<_>>())
+            .signed_get(
+                &url,
+                "artistget",
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect::<Vec<_>>(),
+            )
             .await?;
-        log::debug!(
-            "[API] get_artist_basic({}) status={}",
-            artist_id,
-            http_response.status()
-        );
+        log::debug!("[API] get_artist_basic({}) status={}", artist_id, http_response.status());
         let response: Value = http_response.json().await?;
 
         Ok(serde_json::from_value(response)?)
     }
 
     /// Get artist by ID
-    pub async fn get_artist(&self, artist_id: u64, with_albums: bool) -> Result<Artist> {
+    pub async fn get_artist(&self, artist_id: u64, with_albums: bool) -> Result<Artist>
+    {
         self.get_artist_with_pagination(artist_id, with_albums, None, None)
             .await
     }
@@ -1179,7 +1255,8 @@ impl QobuzClient {
         artist_id: u64,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<Artist> {
+    ) -> Result<Artist>
+    {
         let url = endpoints::build_url(paths::ARTIST_GET);
         let locale = self.locale().await;
         let mut query = vec![
@@ -1187,21 +1264,26 @@ impl QobuzClient {
             ("extra", "albums,tracks_appears_on,playlists".to_string()),
             ("lang", locale),
         ];
-        if let Some(l) = limit {
+        if let Some(l) = limit
+        {
             query.push(("limit", l.to_string()));
         }
-        if let Some(o) = offset {
+        if let Some(o) = offset
+        {
             query.push(("offset", o.to_string()));
         }
 
         let http_response = self
-            .signed_get(&url, "artistget", &query.iter().map(|(k, v)| (*k, v.clone())).collect::<Vec<_>>())
+            .signed_get(
+                &url,
+                "artistget",
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect::<Vec<_>>(),
+            )
             .await?;
-        log::debug!(
-            "[API] get_artist_detail({}) status={}",
-            artist_id,
-            http_response.status()
-        );
+        log::debug!("[API] get_artist_detail({}) status={}", artist_id, http_response.status());
         let response: Value = http_response.json().await?;
 
         Ok(serde_json::from_value(response)?)
@@ -1214,7 +1296,8 @@ impl QobuzClient {
         with_albums: bool,
         limit: Option<u32>,
         offset: Option<u32>,
-    ) -> Result<Artist> {
+    ) -> Result<Artist>
+    {
         self.get_artist_with_pagination_and_locale(artist_id, with_albums, limit, offset, None)
             .await
     }
@@ -1228,25 +1311,37 @@ impl QobuzClient {
         limit: Option<u32>,
         offset: Option<u32>,
         locale_override: Option<&str>,
-    ) -> Result<Artist> {
+    ) -> Result<Artist>
+    {
         let url = endpoints::build_url(paths::ARTIST_GET);
-        let locale = match locale_override {
+        let locale = match locale_override
+        {
             Some(l) => l.to_string(),
             None => self.locale().await,
         };
         let mut query = vec![("artist_id", artist_id.to_string()), ("lang", locale)];
-        if with_albums {
+        if with_albums
+        {
             query.push(("extra", "albums".to_string()));
         }
-        if let Some(l) = limit {
+        if let Some(l) = limit
+        {
             query.push(("limit", l.to_string()));
         }
-        if let Some(o) = offset {
+        if let Some(o) = offset
+        {
             query.push(("offset", o.to_string()));
         }
 
         let http_response = self
-            .signed_get(&url, "artistget", &query.iter().map(|(k, v)| (*k, v.clone())).collect::<Vec<_>>())
+            .signed_get(
+                &url,
+                "artistget",
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect::<Vec<_>>(),
+            )
             .await?;
         log::debug!(
             "[API] get_artist({}, albums={}) status={}",
@@ -1262,13 +1357,18 @@ impl QobuzClient {
     /// Get playlist metadata + ordered track IDs (lightweight, no full Track objects).
     /// Uses `playlist/get?extra=track_ids` which returns the playlist with a flat
     /// array of track IDs instead of nested Track objects.
-    pub async fn get_playlist_track_ids(&self, playlist_id: u64) -> Result<PlaylistWithTrackIds> {
+    pub async fn get_playlist_track_ids(&self, playlist_id: u64) -> Result<PlaylistWithTrackIds>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_GET);
         let http_response = self
-            .signed_get(&url, "playlistget", &[
-                ("playlist_id", playlist_id.to_string()),
-                ("extra", "track_ids".to_string()),
-            ])
+            .signed_get(
+                &url,
+                "playlistget",
+                &[
+                    ("playlist_id", playlist_id.to_string()),
+                    ("extra", "track_ids".to_string()),
+                ],
+            )
             .await?;
         log::debug!(
             "[API] get_playlist_track_ids({}) status={}",
@@ -1291,12 +1391,17 @@ impl QobuzClient {
     /// Tries multiple API call strategies:
     /// POST to track/getList with JSON body {"tracks_id": [...]}
     /// Returns full Track objects for the given IDs (max 50 per call).
-    pub async fn get_tracks_batch(&self, track_ids: &[u64]) -> Result<Vec<Track>> {
+    pub async fn get_tracks_batch(&self, track_ids: &[u64]) -> Result<Vec<Track>>
+    {
         let url = endpoints::build_url(paths::TRACK_GET_LIST);
         let headers = self.api_headers().await?;
         let timestamp = get_timestamp();
         let secret = self.secret().await?;
-        let ids_str: String = track_ids.iter().map(|id| id.to_string()).collect::<Vec<_>>().join(",");
+        let ids_str: String = track_ids
+            .iter()
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         let sig = sign_request("trackgetList", &[("tracks_id", &ids_str)], timestamp, &secret);
 
         let body = serde_json::json!({ "tracks_id": track_ids });
@@ -1341,7 +1446,8 @@ impl QobuzClient {
     ///
     /// After the first page, remaining pages are fetched concurrently
     /// since we know the total track count from the first response.
-    pub async fn get_playlist(&self, playlist_id: u64) -> Result<Playlist> {
+    pub async fn get_playlist(&self, playlist_id: u64) -> Result<Playlist>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_GET);
         const PAGE_SIZE: u32 = 500;
 
@@ -1349,27 +1455,29 @@ impl QobuzClient {
 
         // First page — gives us metadata + total track count
         let http_response = self
-            .signed_get(&url, "playlistget", &[
-                ("playlist_id", playlist_id.to_string()),
-                ("limit", PAGE_SIZE.to_string()),
-                ("offset", "0".to_string()),
-                ("extra", "tracks".to_string()),
-            ])
+            .signed_get(
+                &url,
+                "playlistget",
+                &[
+                    ("playlist_id", playlist_id.to_string()),
+                    ("limit", PAGE_SIZE.to_string()),
+                    ("offset", "0".to_string()),
+                    ("extra", "tracks".to_string()),
+                ],
+            )
             .await?;
-        log::debug!(
-            "[API] get_playlist({}) status={}",
-            playlist_id,
-            http_response.status()
-        );
+        log::debug!("[API] get_playlist({}) status={}", playlist_id, http_response.status());
         let response: Value = http_response.json().await?;
         let mut playlist: Playlist = serde_json::from_value(response)?;
 
         // Fetch remaining pages concurrently
-        if let Some(ref mut container) = playlist.tracks {
+        if let Some(ref mut container) = playlist.tracks
+        {
             let total = container.total;
             let fetched = container.items.len() as u32;
 
-            if fetched < total {
+            if fetched < total
+            {
                 // Build all remaining page offsets
                 let offsets: Vec<u32> = (fetched..total).step_by(PAGE_SIZE as usize).collect();
                 log::debug!(
@@ -1397,7 +1505,12 @@ impl QobuzClient {
                         let ts = get_timestamp();
                         let sig = sign_request(
                             "playlistget",
-                            &[("extra", "tracks"), ("limit", &limit), ("offset", &offset_str), ("playlist_id", &pid)],
+                            &[
+                                ("extra", "tracks"),
+                                ("limit", &limit),
+                                ("offset", &offset_str),
+                                ("playlist_id", &pid),
+                            ],
                             ts,
                             &secret,
                         );
@@ -1427,10 +1540,13 @@ impl QobuzClient {
 
                 // Collect results sorted by offset to maintain track order
                 let mut pages: Vec<(u32, Playlist)> = Vec::new();
-                for result in results {
-                    match result {
+                for result in results
+                {
+                    match result
+                    {
                         Ok(page) => pages.push(page),
-                        Err(e) => {
+                        Err(e) =>
+                        {
                             log::warn!(
                                 "[API] get_playlist({}) page fetch failed: {}",
                                 playlist_id,
@@ -1443,9 +1559,12 @@ impl QobuzClient {
                 pages.sort_by_key(|(offset, _)| *offset);
 
                 // Append tracks in order
-                for (_, page_playlist) in pages {
-                    if let Some(page_tracks) = page_playlist.tracks {
-                        if !page_tracks.items.is_empty() {
+                for (_, page_playlist) in pages
+                {
+                    if let Some(page_tracks) = page_playlist.tracks
+                    {
+                        if !page_tracks.items.is_empty()
+                        {
                             container.items.extend(page_tracks.items);
                         }
                     }
@@ -1465,7 +1584,8 @@ impl QobuzClient {
     }
 
     /// Get label page (aggregated: top tracks, releases, playlists, artists)
-    pub async fn get_label_page(&self, label_id: u64) -> Result<LabelPageData> {
+    pub async fn get_label_page(&self, label_id: u64) -> Result<LabelPageData>
+    {
         let url = endpoints::build_url(paths::LABEL_PAGE);
 
         log::debug!("[API] get_label_page({})", label_id);
@@ -1480,21 +1600,15 @@ impl QobuzClient {
 
     /// Enumerate the award catalog (/award/explore). Paginated.
     /// Returns raw JSON items so callers can extract just (id, name).
-    pub async fn get_award_explore(
-        &self,
-        limit: u32,
-        offset: u32,
-    ) -> Result<serde_json::Value> {
+    pub async fn get_award_explore(&self, limit: u32, offset: u32) -> Result<serde_json::Value>
+    {
         let url = endpoints::build_url(paths::AWARD_EXPLORE);
         log::debug!("[API] get_award_explore(limit={}, offset={})", limit, offset);
         let response: serde_json::Value = self
             .signed_get_auth(
                 &url,
                 "awardexplore",
-                &[
-                    ("limit", limit.to_string()),
-                    ("offset", offset.to_string()),
-                ],
+                &[("limit", limit.to_string()), ("offset", offset.to_string())],
             )
             .await?
             .json()
@@ -1505,7 +1619,8 @@ impl QobuzClient {
     /// Get award page — hero info + categorized award-winning releases.
     /// Mirrors Android's AwardDto shape from /award/page. Uses auth
     /// headers (app_id + user token) — region-gated catalog.
-    pub async fn get_award_page(&self, award_id: &str) -> Result<crate::models::AwardPageData> {
+    pub async fn get_award_page(&self, award_id: &str) -> Result<crate::models::AwardPageData>
+    {
         let url = endpoints::build_url(paths::AWARD_PAGE);
         log::debug!("[API] get_award_page({})", award_id);
         let response: serde_json::Value = self
@@ -1526,14 +1641,10 @@ impl QobuzClient {
         award_id: &str,
         limit: u32,
         offset: u32,
-    ) -> Result<SearchResultsPage<Album>> {
+    ) -> Result<SearchResultsPage<Album>>
+    {
         let url = endpoints::build_url(paths::AWARD_GET_ALBUMS);
-        log::debug!(
-            "[API] get_award_albums({}, limit={}, offset={})",
-            award_id,
-            limit,
-            offset
-        );
+        log::debug!("[API] get_award_albums({}, limit={}, offset={})", award_id, limit, offset);
         let http_response = self
             .signed_get_auth(
                 &url,
@@ -1547,33 +1658,36 @@ impl QobuzClient {
             .await?;
         let status = http_response.status();
         let body_text = http_response.text().await?;
-        if !status.is_success() {
+        if !status.is_success()
+        {
             log::warn!(
                 "[API] get_award_albums non-success body (first 400 chars): {}",
                 body_text.chars().take(400).collect::<String>()
             );
-            return Err(ApiError::ApiResponse(format!(
-                "get_award_albums status {}",
-                status
-            )));
+            return Err(ApiError::ApiResponse(format!("get_award_albums status {}", status)));
         }
         let response: serde_json::Value = serde_json::from_str(&body_text)?;
 
         // Legacy shape some endpoints use: {albums: {items, total, offset, limit}}
-        if let Some(albums_obj) = response.get("albums") {
+        if let Some(albums_obj) = response.get("albums")
+        {
             return Ok(serde_json::from_value(albums_obj.clone())?);
         }
 
         // Current shape: V2AlbumGenericListDto {has_more, items}.
-        let mut items_value = response.get("items").cloned().unwrap_or(serde_json::Value::Null);
-        if let Some(items_arr) = items_value.as_array_mut() {
-            for item in items_arr {
-                if let Some(obj) = item.as_object_mut() {
-                    let needs_backfill = obj
-                        .get("artist")
-                        .map(|v| v.is_null())
-                        .unwrap_or(true);
-                    if needs_backfill {
+        let mut items_value = response
+            .get("items")
+            .cloned()
+            .unwrap_or(serde_json::Value::Null);
+        if let Some(items_arr) = items_value.as_array_mut()
+        {
+            for item in items_arr
+            {
+                if let Some(obj) = item.as_object_mut()
+                {
+                    let needs_backfill = obj.get("artist").map(|v| v.is_null()).unwrap_or(true);
+                    if needs_backfill
+                    {
                         if let Some(first_artist) = obj
                             .get("artists")
                             .and_then(|a| a.as_array())
@@ -1599,9 +1713,12 @@ impl QobuzClient {
             .get("has_more")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
-        let total_hint = if has_more {
+        let total_hint = if has_more
+        {
             offset + items.len() as u32 + 1
-        } else {
+        }
+        else
+        {
             offset + items.len() as u32
         };
         log::info!(
@@ -1619,16 +1736,17 @@ impl QobuzClient {
     }
 
     /// Get label explore (discover more labels)
-    pub async fn get_label_explore(&self, limit: u32, offset: u32) -> Result<LabelExploreResponse> {
+    pub async fn get_label_explore(&self, limit: u32, offset: u32) -> Result<LabelExploreResponse>
+    {
         let url = endpoints::build_url(paths::LABEL_EXPLORE);
 
-        log::debug!(
-            "[API] get_label_explore(limit={}, offset={})",
-            limit,
-            offset
-        );
+        log::debug!("[API] get_label_explore(limit={}, offset={})", limit, offset);
         let response: serde_json::Value = self
-            .signed_get(&url, "labelexplore", &[("limit", limit.to_string()), ("offset", offset.to_string())])
+            .signed_get(
+                &url,
+                "labelexplore",
+                &[("limit", limit.to_string()), ("offset", offset.to_string())],
+            )
             .await?
             .json()
             .await?;
@@ -1650,18 +1768,34 @@ impl QobuzClient {
         genre_ids: Option<&str>,
         from_date: Option<&str>,
         to_date: Option<&str>,
-    ) -> Result<LabelListPage<Album>> {
+    ) -> Result<LabelListPage<Album>>
+    {
         let url = endpoints::build_url(paths::LABEL_GET_ALBUMS);
         let mut params: Vec<(&str, String)> = vec![
             ("label_id", label_id.to_string()),
             ("limit", limit.to_string()),
             ("offset", offset.to_string()),
         ];
-        if let Some(v) = sort { params.push(("sort", v.to_string())); }
-        if let Some(v) = order { params.push(("order", v.to_string())); }
-        if let Some(v) = genre_ids { params.push(("genre_ids", v.to_string())); }
-        if let Some(v) = from_date { params.push(("from_date", v.to_string())); }
-        if let Some(v) = to_date { params.push(("to_date", v.to_string())); }
+        if let Some(v) = sort
+        {
+            params.push(("sort", v.to_string()));
+        }
+        if let Some(v) = order
+        {
+            params.push(("order", v.to_string()));
+        }
+        if let Some(v) = genre_ids
+        {
+            params.push(("genre_ids", v.to_string()));
+        }
+        if let Some(v) = from_date
+        {
+            params.push(("from_date", v.to_string()));
+        }
+        if let Some(v) = to_date
+        {
+            params.push(("to_date", v.to_string()));
+        }
 
         log::debug!("[API] get_label_albums({}, limit={}, offset={})", label_id, limit, offset);
         let response: Value = self
@@ -1679,14 +1813,18 @@ impl QobuzClient {
         limit: u32,
         offset: u32,
         genre_ids: Option<&str>,
-    ) -> Result<LabelListPage<Album>> {
+    ) -> Result<LabelListPage<Album>>
+    {
         let url = endpoints::build_url(paths::LABEL_GET_NEXT_RELEASES);
         let mut params: Vec<(&str, String)> = vec![
             ("label_id", label_id.to_string()),
             ("limit", limit.to_string()),
             ("offset", offset.to_string()),
         ];
-        if let Some(v) = genre_ids { params.push(("genre_ids", v.to_string())); }
+        if let Some(v) = genre_ids
+        {
+            params.push(("genre_ids", v.to_string()));
+        }
 
         log::debug!("[API] get_label_next_releases({})", label_id);
         let response: Value = self
@@ -1706,16 +1844,26 @@ impl QobuzClient {
         sort: Option<&str>,
         order: Option<&str>,
         genre_ids: Option<&str>,
-    ) -> Result<LabelListPage<Album>> {
+    ) -> Result<LabelListPage<Album>>
+    {
         let url = endpoints::build_url(paths::LABEL_GET_AWARDED_RELEASES);
         let mut params: Vec<(&str, String)> = vec![
             ("label_id", label_id.to_string()),
             ("limit", limit.to_string()),
             ("offset", offset.to_string()),
         ];
-        if let Some(v) = sort { params.push(("sort", v.to_string())); }
-        if let Some(v) = order { params.push(("order", v.to_string())); }
-        if let Some(v) = genre_ids { params.push(("genre_ids", v.to_string())); }
+        if let Some(v) = sort
+        {
+            params.push(("sort", v.to_string()));
+        }
+        if let Some(v) = order
+        {
+            params.push(("order", v.to_string()));
+        }
+        if let Some(v) = genre_ids
+        {
+            params.push(("genre_ids", v.to_string()));
+        }
 
         log::debug!("[API] get_label_awarded_releases({})", label_id);
         let response: Value = self
@@ -1732,15 +1880,20 @@ impl QobuzClient {
         label_id: u64,
         limit: u32,
         offset: u32,
-    ) -> Result<LabelListPage<Playlist>> {
+    ) -> Result<LabelListPage<Playlist>>
+    {
         let url = endpoints::build_url(paths::LABEL_GET_PLAYLISTS);
         log::debug!("[API] get_label_playlists({})", label_id);
         let response: Value = self
-            .signed_get(&url, "labelgetplaylists", &[
-                ("label_id", label_id.to_string()),
-                ("limit", limit.to_string()),
-                ("offset", offset.to_string()),
-            ])
+            .signed_get(
+                &url,
+                "labelgetplaylists",
+                &[
+                    ("label_id", label_id.to_string()),
+                    ("limit", limit.to_string()),
+                    ("offset", offset.to_string()),
+                ],
+            )
             .await?
             .json()
             .await?;
@@ -1753,15 +1906,20 @@ impl QobuzClient {
         label_id: u64,
         limit: u32,
         offset: u32,
-    ) -> Result<LabelListPage<Artist>> {
+    ) -> Result<LabelListPage<Artist>>
+    {
         let url = endpoints::build_url(paths::LABEL_GET_TOP_ARTISTS);
         log::debug!("[API] get_label_top_artists({})", label_id);
         let response: Value = self
-            .signed_get(&url, "labelgettopartists", &[
-                ("label_id", label_id.to_string()),
-                ("limit", limit.to_string()),
-                ("offset", offset.to_string()),
-            ])
+            .signed_get(
+                &url,
+                "labelgettopartists",
+                &[
+                    ("label_id", label_id.to_string()),
+                    ("limit", limit.to_string()),
+                    ("offset", offset.to_string()),
+                ],
+            )
             .await?
             .json()
             .await?;
@@ -1774,15 +1932,20 @@ impl QobuzClient {
         label_id: u64,
         limit: u32,
         offset: u32,
-    ) -> Result<LabelStoryResponse> {
+    ) -> Result<LabelStoryResponse>
+    {
         let url = endpoints::build_url(paths::LABEL_STORY);
         log::debug!("[API] get_label_story({})", label_id);
         let response: Value = self
-            .signed_get(&url, "labelstory", &[
-                ("label_id", label_id.to_string()),
-                ("limit", limit.to_string()),
-                ("offset", offset.to_string()),
-            ])
+            .signed_get(
+                &url,
+                "labelstory",
+                &[
+                    ("label_id", label_id.to_string()),
+                    ("limit", limit.to_string()),
+                    ("offset", offset.to_string()),
+                ],
+            )
             .await?
             .json()
             .await?;
@@ -1794,7 +1957,8 @@ impl QobuzClient {
     /// Follows the same signing convention as `get_tracks_batch` (see
     /// `track/getList`): the sig covers the joined ID list as a query
     /// string key, and the JSON body carries the list itself.
-    pub async fn get_label_list(&self, label_ids: &[u64]) -> Result<LabelGetListResponse> {
+    pub async fn get_label_list(&self, label_ids: &[u64]) -> Result<LabelGetListResponse>
+    {
         let url = endpoints::build_url(paths::LABEL_GET_LIST);
         let headers = self.api_headers().await?;
         let timestamp = get_timestamp();
@@ -1825,12 +1989,9 @@ impl QobuzClient {
     // === Authenticated endpoints ===
 
     /// Get stream URL for a track (requires auth + signature)
-    pub async fn get_stream_url(&self, track_id: u64, quality: Quality) -> Result<StreamUrl> {
-        log::info!(
-            "Getting stream URL for track {} with quality {:?}",
-            track_id,
-            quality
-        );
+    pub async fn get_stream_url(&self, track_id: u64, quality: Quality) -> Result<StreamUrl>
+    {
+        log::info!("Getting stream URL for track {} with quality {:?}", track_id, quality);
         let url = endpoints::build_url(paths::TRACK_GET_FILE_URL);
         let timestamp = get_timestamp();
         log::debug!("Getting secret for signing...");
@@ -1854,8 +2015,10 @@ impl QobuzClient {
             .await?;
 
         log::info!("Stream URL response status: {}", response.status());
-        match response.status() {
-            StatusCode::OK => {
+        match response.status()
+        {
+            StatusCode::OK =>
+            {
                 let json: Value = response.json().await?;
                 log::debug!(
                     "Stream URL response JSON keys: {:?}",
@@ -1870,7 +2033,8 @@ impl QobuzClient {
 
                 // Validate that we got an actual URL (track may be unavailable)
                 let url = json["url"].as_str().unwrap_or("").to_string();
-                if url.is_empty() {
+                if url.is_empty()
+                {
                     // Log the restriction codes for debugging
                     let restriction_codes: Vec<&str> =
                         restrictions.iter().map(|r| r.code.as_str()).collect();
@@ -1893,10 +2057,7 @@ impl QobuzClient {
                 })
             }
             StatusCode::BAD_REQUEST => Err(ApiError::InvalidAppSecret),
-            status => Err(ApiError::ApiResponse(format!(
-                "Unexpected status: {}",
-                status
-            ))),
+            status => Err(ApiError::ApiResponse(format!("Unexpected status: {}", status))),
         }
     }
 
@@ -1905,7 +2066,8 @@ impl QobuzClient {
         &self,
         track_id: u64,
         preferred: Quality,
-    ) -> Result<StreamUrl> {
+    ) -> Result<StreamUrl>
+    {
         log::info!(
             "Getting stream URL with fallback for track {}, preferred quality: {:?}",
             track_id,
@@ -1916,30 +2078,34 @@ impl QobuzClient {
 
         let mut track_unavailable = false;
 
-        for quality in &qualities[start_idx..] {
+        for quality in &qualities[start_idx..]
+        {
             log::info!("Trying quality: {:?}", quality);
-            match self.get_stream_url(track_id, *quality).await {
-                Ok(url) if !url.has_restrictions() => {
-                    log::info!(
-                        "Got stream URL for requested quality format_id={}",
-                        quality.id()
-                    );
+            match self.get_stream_url(track_id, *quality).await
+            {
+                Ok(url) if !url.has_restrictions() =>
+                {
+                    log::info!("Got stream URL for requested quality format_id={}", quality.id());
                     return Ok(url);
                 }
-                Ok(_) => {
+                Ok(_) =>
+                {
                     log::info!("Quality {:?} has restrictions, trying next", quality);
                     continue;
                 }
-                Err(ApiError::InvalidAppSecret) => {
+                Err(ApiError::InvalidAppSecret) =>
+                {
                     log::error!("Invalid app secret");
                     return Err(ApiError::InvalidAppSecret);
                 }
-                Err(ApiError::TrackUnavailable(_)) => {
+                Err(ApiError::TrackUnavailable(_)) =>
+                {
                     // Track is completely unavailable on Qobuz
                     track_unavailable = true;
                     continue;
                 }
-                Err(e) => {
+                Err(e) =>
+                {
                     log::warn!("Quality {:?} failed: {}, trying next", quality, e);
                     continue;
                 }
@@ -1947,7 +2113,8 @@ impl QobuzClient {
         }
 
         // If all quality levels reported track unavailable, return that specific error
-        if track_unavailable {
+        if track_unavailable
+        {
             log::error!("Track {} is no longer available on Qobuz", track_id);
             return Err(ApiError::TrackUnavailable(track_id));
         }
@@ -1957,7 +2124,8 @@ impl QobuzClient {
     }
 
     /// Get user favorites (requires auth + signature)
-    pub async fn get_favorites(&self, fav_type: &str, limit: u32, offset: u32) -> Result<Value> {
+    pub async fn get_favorites(&self, fav_type: &str, limit: u32, offset: u32) -> Result<Value>
+    {
         let url = endpoints::build_url(paths::FAVORITE_GET_USER_FAVORITES);
         let timestamp = get_timestamp();
         let secret = self.secret().await?;
@@ -1976,18 +2144,15 @@ impl QobuzClient {
             ])
             .send()
             .await?;
-        log::debug!(
-            "[API] get_favorites({}) status={}",
-            fav_type,
-            http_response.status()
-        );
+        log::debug!("[API] get_favorites({}) status={}", fav_type, http_response.status());
         let response: Value = http_response.json().await?;
 
         Ok(response)
     }
 
     /// Get user's playlists
-    pub async fn get_user_playlists(&self) -> Result<Vec<Playlist>> {
+    pub async fn get_user_playlists(&self) -> Result<Vec<Playlist>>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_GET_USER_PLAYLISTS);
         let http_response = self
             .signed_get_auth(&url, "playlistgetUserPlaylists", &[])
@@ -2009,11 +2174,13 @@ impl QobuzClient {
         query: &str,
         limit: u32,
         offset: u32,
-    ) -> Result<SearchResultsPage<Playlist>> {
+    ) -> Result<SearchResultsPage<Playlist>>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_SEARCH);
         let timestamp = get_timestamp();
         let secret = self.secret().await?;
-        let signature = sign_search("playlistsearch", query, limit, offset, None, timestamp, &secret);
+        let signature =
+            sign_search("playlistsearch", query, limit, offset, None, timestamp, &secret);
         let limit_str = limit.to_string();
         let offset_str = offset.to_string();
         let ts_str = timestamp.to_string();
@@ -2047,14 +2214,16 @@ impl QobuzClient {
         name: &str,
         description: Option<&str>,
         is_public: bool,
-    ) -> Result<Playlist> {
+    ) -> Result<Playlist>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_CREATE);
 
         let mut params = vec![
             ("name", name.to_string()),
             ("is_public", is_public.to_string()),
         ];
-        if let Some(desc) = description {
+        if let Some(desc) = description
+        {
             params.push(("description", desc.to_string()));
         }
 
@@ -2069,7 +2238,8 @@ impl QobuzClient {
     }
 
     /// Delete a playlist
-    pub async fn delete_playlist(&self, playlist_id: u64) -> Result<()> {
+    pub async fn delete_playlist(&self, playlist_id: u64) -> Result<()>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_DELETE);
 
         self.signed_get_auth(&url, "playlistdelete", &[("playlist_id", playlist_id.to_string())])
@@ -2079,7 +2249,8 @@ impl QobuzClient {
     }
 
     /// Add tracks to a playlist
-    pub async fn add_tracks_to_playlist(&self, playlist_id: u64, track_ids: &[u64]) -> Result<()> {
+    pub async fn add_tracks_to_playlist(&self, playlist_id: u64, track_ids: &[u64]) -> Result<()>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_ADD_TRACKS);
         let track_ids_str = track_ids
             .iter()
@@ -2087,10 +2258,14 @@ impl QobuzClient {
             .collect::<Vec<_>>()
             .join(",");
 
-        self.signed_get_auth(&url, "playlistaddTracks", &[
-            ("playlist_id", playlist_id.to_string()),
-            ("track_ids", track_ids_str),
-        ])
+        self.signed_get_auth(
+            &url,
+            "playlistaddTracks",
+            &[
+                ("playlist_id", playlist_id.to_string()),
+                ("track_ids", track_ids_str),
+            ],
+        )
         .await?;
 
         Ok(())
@@ -2101,7 +2276,8 @@ impl QobuzClient {
         &self,
         playlist_id: u64,
         playlist_track_ids: &[u64],
-    ) -> Result<()> {
+    ) -> Result<()>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_DELETE_TRACKS);
         let track_ids_str = playlist_track_ids
             .iter()
@@ -2109,10 +2285,14 @@ impl QobuzClient {
             .collect::<Vec<_>>()
             .join(",");
 
-        self.signed_get_auth(&url, "playlistdeleteTracks", &[
-            ("playlist_id", playlist_id.to_string()),
-            ("playlist_track_ids", track_ids_str),
-        ])
+        self.signed_get_auth(
+            &url,
+            "playlistdeleteTracks",
+            &[
+                ("playlist_id", playlist_id.to_string()),
+                ("playlist_track_ids", track_ids_str),
+            ],
+        )
         .await?;
 
         Ok(())
@@ -2125,17 +2305,21 @@ impl QobuzClient {
         name: Option<&str>,
         description: Option<&str>,
         is_public: Option<bool>,
-    ) -> Result<Playlist> {
+    ) -> Result<Playlist>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_UPDATE);
 
         let mut params = vec![("playlist_id", playlist_id.to_string())];
-        if let Some(n) = name {
+        if let Some(n) = name
+        {
             params.push(("name", n.to_string()));
         }
-        if let Some(d) = description {
+        if let Some(d) = description
+        {
             params.push(("description", d.to_string()));
         }
-        if let Some(p) = is_public {
+        if let Some(p) = is_public
+        {
             params.push(("is_public", p.to_string()));
         }
 
@@ -2150,7 +2334,8 @@ impl QobuzClient {
     }
 
     /// Subscribe to a Qobuz playlist (follow it in the user's library)
-    pub async fn subscribe_playlist(&self, playlist_id: u64) -> Result<()> {
+    pub async fn subscribe_playlist(&self, playlist_id: u64) -> Result<()>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_SUBSCRIBE);
 
         let response = self
@@ -2158,7 +2343,8 @@ impl QobuzClient {
             .await?;
 
         let status = response.status();
-        if !status.is_success() {
+        if !status.is_success()
+        {
             let body = response.text().await.unwrap_or_default();
             return Err(ApiError::ApiResponse(format!(
                 "playlist/subscribe failed ({}): {}",
@@ -2170,15 +2356,21 @@ impl QobuzClient {
     }
 
     /// Unsubscribe from a Qobuz playlist
-    pub async fn unsubscribe_playlist(&self, playlist_id: u64) -> Result<()> {
+    pub async fn unsubscribe_playlist(&self, playlist_id: u64) -> Result<()>
+    {
         let url = endpoints::build_url(paths::PLAYLIST_UNSUBSCRIBE);
 
         let response = self
-            .signed_get_auth(&url, "playlistunsubscribe", &[("playlist_id", playlist_id.to_string())])
+            .signed_get_auth(
+                &url,
+                "playlistunsubscribe",
+                &[("playlist_id", playlist_id.to_string())],
+            )
             .await?;
 
         let status = response.status();
-        if !status.is_success() {
+        if !status.is_success()
+        {
             let body = response.text().await.unwrap_or_default();
             return Err(ApiError::ApiResponse(format!(
                 "playlist/unsubscribe failed ({}): {}",
@@ -2190,7 +2382,8 @@ impl QobuzClient {
     }
 
     /// Add item to favorites
-    pub async fn add_favorite(&self, fav_type: &str, item_id: &str) -> Result<()> {
+    pub async fn add_favorite(&self, fav_type: &str, item_id: &str) -> Result<()>
+    {
         let url = endpoints::build_url(paths::FAVORITE_CREATE);
         let type_key = format!("{}_ids", fav_type); // album_ids, track_ids, artist_ids
 
@@ -2198,18 +2391,19 @@ impl QobuzClient {
             .signed_get_auth(&url, "favoritecreate", &[(type_key.as_str(), item_id.to_string())])
             .await?;
 
-        if response.status().is_success() {
+        if response.status().is_success()
+        {
             Ok(())
-        } else {
-            Err(ApiError::ApiResponse(format!(
-                "Failed to add favorite: {}",
-                response.status()
-            )))
+        }
+        else
+        {
+            Err(ApiError::ApiResponse(format!("Failed to add favorite: {}", response.status())))
         }
     }
 
     /// Remove item from favorites
-    pub async fn remove_favorite(&self, fav_type: &str, item_id: &str) -> Result<()> {
+    pub async fn remove_favorite(&self, fav_type: &str, item_id: &str) -> Result<()>
+    {
         let url = endpoints::build_url(paths::FAVORITE_DELETE);
         let type_key = format!("{}_ids", fav_type);
 
@@ -2217,13 +2411,13 @@ impl QobuzClient {
             .signed_get_auth(&url, "favoritedelete", &[(type_key.as_str(), item_id.to_string())])
             .await?;
 
-        if response.status().is_success() {
+        if response.status().is_success()
+        {
             Ok(())
-        } else {
-            Err(ApiError::ApiResponse(format!(
-                "Failed to remove favorite: {}",
-                response.status()
-            )))
+        }
+        else
+        {
+            Err(ApiError::ApiResponse(format!("Failed to remove favorite: {}", response.status())))
         }
     }
 
@@ -2234,16 +2428,25 @@ impl QobuzClient {
         &self,
         artist_id: u64,
         sort: Option<&str>,
-    ) -> Result<PageArtistResponse> {
+    ) -> Result<PageArtistResponse>
+    {
         let url = endpoints::build_url(paths::ARTIST_PAGE);
         let mut query = vec![("artist_id", artist_id.to_string())];
-        if let Some(s) = sort {
+        if let Some(s) = sort
+        {
             query.push(("sort", s.to_string()));
         }
 
         log::debug!("[API] get_artist_page({}) sort={:?}", artist_id, sort);
         let response: serde_json::Value = self
-            .signed_get(&url, "artistpage", &query.iter().map(|(k, v)| (*k, v.clone())).collect::<Vec<_>>())
+            .signed_get(
+                &url,
+                "artistpage",
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect::<Vec<_>>(),
+            )
             .await?
             .json()
             .await?;
@@ -2259,7 +2462,8 @@ impl QobuzClient {
         limit: u32,
         offset: u32,
         sort: Option<&str>,
-    ) -> Result<ReleasesGridResponse> {
+    ) -> Result<ReleasesGridResponse>
+    {
         let url = endpoints::build_url(paths::ARTIST_RELEASES_GRID);
         let mut query = vec![
             ("artist_id", artist_id.to_string()),
@@ -2267,7 +2471,8 @@ impl QobuzClient {
             ("limit", limit.to_string()),
             ("offset", offset.to_string()),
         ];
-        if let Some(s) = sort {
+        if let Some(s) = sort
+        {
             query.push(("sort", s.to_string()));
         }
 
@@ -2279,7 +2484,14 @@ impl QobuzClient {
             offset
         );
         let response: serde_json::Value = self
-            .signed_get(&url, "artistgetReleasesGrid", &query.iter().map(|(k, v)| (*k, v.clone())).collect::<Vec<_>>())
+            .signed_get(
+                &url,
+                "artistgetReleasesGrid",
+                &query
+                    .iter()
+                    .map(|(k, v)| (*k, v.clone()))
+                    .collect::<Vec<_>>(),
+            )
             .await?
             .json()
             .await?;
@@ -2305,14 +2517,17 @@ impl QobuzClient {
     /// Fix: a double-checked lock pattern on the write guard. Fast path
     /// uses a read guard; slow path acquires the write guard, re-checks
     /// under exclusive ownership, and only one caller hits the network.
-    pub async fn ensure_cmaf_session(&self) -> Result<(String, String)> {
+    pub async fn ensure_cmaf_session(&self) -> Result<(String, String)>
+    {
         let now = get_timestamp();
 
         // Fast path: existing session with > 60s left.
         {
             let guard = self.cmaf_session.read().await;
-            if let Some(ref cs) = *guard {
-                if cs.expires_at > now + 60 {
+            if let Some(ref cs) = *guard
+            {
+                if cs.expires_at > now + 60
+                {
                     return Ok((cs.session_id.clone(), cs.infos.clone()));
                 }
             }
@@ -2323,8 +2538,10 @@ impl QobuzClient {
         // session/start, the rest find the freshly-populated cache and
         // return without hitting the network.
         let mut guard = self.cmaf_session.write().await;
-        if let Some(ref cs) = *guard {
-            if cs.expires_at > now + 60 {
+        if let Some(ref cs) = *guard
+        {
+            if cs.expires_at > now + 60
+            {
                 return Ok((cs.session_id.clone(), cs.infos.clone()));
             }
         }
@@ -2348,7 +2565,8 @@ impl QobuzClient {
             .await?;
 
         let status = response.status();
-        if !status.is_success() {
+        if !status.is_success()
+        {
             return Err(ApiError::ApiResponse(format!(
                 "session/start failed with status {}",
                 status
@@ -2379,11 +2597,8 @@ impl QobuzClient {
     ///
     /// This is the new streaming endpoint that returns encrypted CMAF segments
     /// instead of a direct file URL.
-    pub async fn get_file_url(
-        &self,
-        track_id: u64,
-        quality: Quality,
-    ) -> Result<TrackFileUrl> {
+    pub async fn get_file_url(&self, track_id: u64, quality: Quality) -> Result<TrackFileUrl>
+    {
         let (session_id, _infos) = self.ensure_cmaf_session().await?;
 
         let timestamp = get_timestamp();
@@ -2421,11 +2636,9 @@ impl QobuzClient {
             status
         );
 
-        if !status.is_success() {
-            return Err(ApiError::ApiResponse(format!(
-                "file/url failed with status {}",
-                status
-            )));
+        if !status.is_success()
+        {
+            return Err(ApiError::ApiResponse(format!("file/url failed with status {}", status)));
         }
 
         let file_url: TrackFileUrl = response.json().await?;
@@ -2440,8 +2653,10 @@ impl QobuzClient {
     }
 }
 
-impl Default for QobuzClient {
-    fn default() -> Self {
+impl Default for QobuzClient
+{
+    fn default() -> Self
+    {
         Self::new().expect("Failed to create client")
     }
 }

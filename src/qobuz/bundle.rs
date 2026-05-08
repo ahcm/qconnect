@@ -13,7 +13,8 @@ const BUNDLE_BASE_URL: &str = "https://play.qobuz.com";
 
 /// Extracted bundle tokens
 #[derive(Debug, Clone)]
-pub struct BundleTokens {
+pub struct BundleTokens
+{
     pub app_id: String,
     pub secrets: Vec<String>,
     /// OAuth private key used for the /oauth/callback exchange.
@@ -22,7 +23,8 @@ pub struct BundleTokens {
 }
 
 /// Extract app_id, secrets, and OAuth private_key from Qobuz bundle
-pub async fn extract_bundle_tokens(client: &Client) -> Result<BundleTokens> {
+pub async fn extract_bundle_tokens(client: &Client) -> Result<BundleTokens>
+{
     // Step 1: Get login page to find bundle URL
     let login_page = client.get(LOGIN_PAGE_URL).send().await?.text().await?;
 
@@ -38,17 +40,19 @@ pub async fn extract_bundle_tokens(client: &Client) -> Result<BundleTokens> {
     // Step 4: Extract secrets
     let secrets = extract_secrets(&bundle_content)?;
 
-    if secrets.is_empty() {
-        return Err(ApiError::BundleExtractionError(
-            "No secrets found in bundle".to_string(),
-        ));
+    if secrets.is_empty()
+    {
+        return Err(ApiError::BundleExtractionError("No secrets found in bundle".to_string()));
     }
 
     // Step 5: Extract OAuth private_key (optional - present in newer bundles)
     let private_key = extract_private_key(&bundle_content);
-    if private_key.is_some() {
+    if private_key.is_some()
+    {
         log::info!("OAuth private_key extracted from bundle");
-    } else {
+    }
+    else
+    {
         log::debug!("OAuth private_key not found in bundle (older bundle version)");
     }
 
@@ -59,7 +63,8 @@ pub async fn extract_bundle_tokens(client: &Client) -> Result<BundleTokens> {
     })
 }
 
-fn extract_bundle_url(html: &str) -> Result<String> {
+fn extract_bundle_url(html: &str) -> Result<String>
+{
     // Pattern: <script src="/resources/X.X.X-bXXX/bundle.js"></script>
     let re =
         Regex::new(r#"<script src="(/resources/\d+\.\d+\.\d+-[a-z]\d{3}/bundle\.js)"></script>"#)
@@ -71,7 +76,8 @@ fn extract_bundle_url(html: &str) -> Result<String> {
         .ok_or_else(|| ApiError::BundleExtractionError("Bundle URL not found".to_string()))
 }
 
-fn extract_app_id(bundle: &str) -> Result<String> {
+fn extract_app_id(bundle: &str) -> Result<String>
+{
     // Pattern: production:{api:{appId:"XXXXXXXXX"
     let re = Regex::new(r#"production:\{api:\{appId:"(?P<app_id>\d{9})""#).expect("Invalid regex");
 
@@ -81,7 +87,8 @@ fn extract_app_id(bundle: &str) -> Result<String> {
         .ok_or_else(|| ApiError::BundleExtractionError("App ID not found".to_string()))
 }
 
-fn extract_secrets(bundle: &str) -> Result<Vec<String>> {
+fn extract_secrets(bundle: &str) -> Result<Vec<String>>
+{
     // Extract seeds with their timezone keys
     // Pattern: X.initialSeed("SEED",window.utimezone.TIMEZONE)
     let seed_re = Regex::new(
@@ -92,24 +99,21 @@ fn extract_secrets(bundle: &str) -> Result<Vec<String>> {
     let mut seeds: std::collections::HashMap<String, String> = std::collections::HashMap::new();
     let mut timezones: Vec<String> = Vec::new();
 
-    for caps in seed_re.captures_iter(bundle) {
-        if let (Some(seed), Some(tz)) = (caps.name("seed"), caps.name("timezone")) {
+    for caps in seed_re.captures_iter(bundle)
+    {
+        if let (Some(seed), Some(tz)) = (caps.name("seed"), caps.name("timezone"))
+        {
             let tz_str = tz.as_str().to_string();
             seeds.insert(tz_str.clone(), seed.as_str().to_string());
             timezones.push(tz_str);
         }
     }
 
-    log::debug!(
-        "Found {} seeds with timezones: {:?}",
-        seeds.len(),
-        timezones
-    );
+    log::debug!("Found {} seeds with timezones: {:?}", seeds.len(), timezones);
 
-    if seeds.is_empty() {
-        return Err(ApiError::BundleExtractionError(
-            "No seeds found".to_string(),
-        ));
+    if seeds.is_empty()
+    {
+        return Err(ApiError::BundleExtractionError("No seeds found".to_string()));
     }
 
     // Build dynamic regex with found timezones (capitalize first letter for matching)
@@ -119,7 +123,8 @@ fn extract_secrets(bundle: &str) -> Result<Vec<String>> {
         .map(|tz| {
             // Capitalize first letter: "berlin" -> "Berlin"
             let mut chars = tz.chars();
-            match chars.next() {
+            match chars.next()
+            {
                 None => String::new(),
                 Some(c) => c.to_uppercase().collect::<String>() + chars.as_str(),
             }
@@ -138,31 +143,31 @@ fn extract_secrets(bundle: &str) -> Result<Vec<String>> {
 
     let mut secrets = Vec::new();
 
-    for caps in info_re.captures_iter(bundle) {
-        if let (Some(tz), Some(info), Some(extras)) = (
-            caps.name("timezone"),
-            caps.name("info"),
-            caps.name("extras"),
-        ) {
+    for caps in info_re.captures_iter(bundle)
+    {
+        if let (Some(tz), Some(info), Some(extras)) =
+            (caps.name("timezone"), caps.name("info"), caps.name("extras"))
+        {
             // Convert capitalized timezone back to lowercase for lookup
             let tz_lower = tz.as_str().to_lowercase();
-            if let Some(seed) = seeds.get(&tz_lower) {
+            if let Some(seed) = seeds.get(&tz_lower)
+            {
                 // Concatenate seed + info + extras, remove last 44 chars, base64 decode
                 let combined = format!("{}{}{}", seed, info.as_str(), extras.as_str());
-                log::debug!(
-                    "Combined length: {}, timezone: {}",
-                    combined.len(),
-                    tz_lower
-                );
+                log::debug!("Combined length: {}, timezone: {}", combined.len(), tz_lower);
 
-                if combined.len() > 44 {
+                if combined.len() > 44
+                {
                     let trimmed = &combined[..combined.len() - 44];
                     match base64::Engine::decode(
                         &base64::engine::general_purpose::STANDARD,
                         trimmed,
-                    ) {
-                        Ok(decoded) => {
-                            if let Ok(secret) = String::from_utf8(decoded) {
+                    )
+                    {
+                        Ok(decoded) =>
+                        {
+                            if let Ok(secret) = String::from_utf8(decoded)
+                            {
                                 log::info!(
                                     "Successfully extracted secret for timezone: {}",
                                     tz_lower
@@ -170,7 +175,8 @@ fn extract_secrets(bundle: &str) -> Result<Vec<String>> {
                                 secrets.push(secret);
                             }
                         }
-                        Err(e) => {
+                        Err(e) =>
+                        {
                             log::debug!("Base64 decode failed for {}: {}", tz_lower, e);
                         }
                     }
@@ -181,11 +187,14 @@ fn extract_secrets(bundle: &str) -> Result<Vec<String>> {
 
     // If the complex extraction fails, try a simpler pattern
     // that might work for some bundle versions
-    if secrets.is_empty() {
+    if secrets.is_empty()
+    {
         log::warn!("Complex extraction failed, trying simple appSecret pattern");
         let simple_re = Regex::new(r#"appSecret:"([a-f0-9]{32})""#).expect("Invalid regex");
-        for caps in simple_re.captures_iter(bundle) {
-            if let Some(secret) = caps.get(1) {
+        for caps in simple_re.captures_iter(bundle)
+        {
+            if let Some(secret) = caps.get(1)
+            {
                 secrets.push(secret.as_str().to_string());
             }
         }
@@ -195,7 +204,8 @@ fn extract_secrets(bundle: &str) -> Result<Vec<String>> {
     Ok(secrets)
 }
 
-fn extract_private_key(bundle: &str) -> Option<String> {
+fn extract_private_key(bundle: &str) -> Option<String>
+{
     // Pattern: privateKey:"VALUE" (the static OAuth key used in /oauth/callback)
     let re = Regex::new(r#"privateKey:\s*"(?P<key>[A-Za-z0-9]{6,30})""#).expect("Invalid regex");
 
@@ -205,11 +215,13 @@ fn extract_private_key(bundle: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests
+{
     use super::*;
 
     #[test]
-    fn test_extract_bundle_url() {
+    fn test_extract_bundle_url()
+    {
         let html = r#"<script src="/resources/7.0.1-b001/bundle.js"></script>"#;
         let result = extract_bundle_url(html);
         assert!(result.is_ok());
@@ -217,7 +229,8 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_app_id() {
+    fn test_extract_app_id()
+    {
         let bundle = r#"production:{api:{appId:"123456789",appSecret:"abc"}"#;
         let result = extract_app_id(bundle);
         assert!(result.is_ok());

@@ -14,10 +14,16 @@ pub use playback::{PlaybackState, PlaybackStatus, QueueState, QueueTrack, Repeat
 pub use traits::{FrontendAdapter, LoggingAdapter, NoOpAdapter};
 pub use types::{
     Album,
+    // Award types
+    AlbumAward,
     AlbumSummary,
     Artist,
     ArtistAlbums,
     ArtistBiography,
+    AwardMagazine,
+    AwardPageContainer,
+    AwardPageData,
+    AwardPageGenericList,
     // Discover types
     DiscoverAlbum,
     DiscoverAlbumDates,
@@ -45,12 +51,6 @@ pub use types::{
     LabelPageData,
     LabelPageGenericList,
     LabelStoryResponse,
-    // Award types
-    AlbumAward,
-    AwardMagazine,
-    AwardPageContainer,
-    AwardPageData,
-    AwardPageGenericList,
     // Artist page types
     PageArtistAward,
     PageArtistBiography,

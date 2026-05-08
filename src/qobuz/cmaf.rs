@@ -51,13 +51,13 @@ pub const CMAF_PREFETCH_CONCURRENCY: usize = 3;
 /// so the caller can emit UI progress events without knowing the CMAF
 /// internals. Callbacks must be `Send + Sync` because segments are
 /// fetched in parallel.
-pub type CmafProgressCallback =
-    std::sync::Arc<dyn Fn(CmafProgressUpdate) + Send + Sync>;
+pub type CmafProgressCallback = std::sync::Arc<dyn Fn(CmafProgressUpdate) + Send + Sync>;
 
 /// A single progress tick. `segments_completed` is cumulative (1..=n),
 /// `n_segments` is the total including the init segment if you count it.
 #[derive(Debug, Clone, Copy)]
-pub struct CmafProgressUpdate {
+pub struct CmafProgressUpdate
+{
     pub segments_completed: u32,
     pub n_segments: u32,
     pub bytes_this_segment: u64,
@@ -67,7 +67,8 @@ pub struct CmafProgressUpdate {
 /// playback. The caller is expected to fetch audio segments 1..n_segments
 /// and feed them through [`crate::cmaf::parse_segment_crypto`] +
 /// [`crate::cmaf::decrypt_frame`].
-pub struct CmafStreamingInfo {
+pub struct CmafStreamingInfo
+{
     pub url_template: String,
     pub n_segments: u8,
     pub content_key: [u8; 16],
@@ -100,7 +101,8 @@ pub struct CmafStreamingInfo {
 /// out without also extracting the OS-keyring wrapped `content_key` gets
 /// nothing usable — the segments are encrypted, the `infos` is just a
 /// salt, and the seed alone isn't enough.
-pub struct CmafRawBundle {
+pub struct CmafRawBundle
+{
     pub init_bytes: Vec<u8>,
     pub segments: Vec<Vec<u8>>,
     pub content_key: [u8; 16],
@@ -117,8 +119,11 @@ pub async fn setup_streaming(
     client: &QobuzClient,
     track_id: u64,
     quality: Quality,
-) -> std::result::Result<CmafStreamingInfo, String> {
-    let file_url = client.get_file_url(track_id, quality).await
+) -> std::result::Result<CmafStreamingInfo, String>
+{
+    let file_url = client
+        .get_file_url(track_id, quality)
+        .await
         .map_err(|e| format!("get_file_url failed: {}", e))?;
 
     let url_template = file_url
@@ -126,12 +131,11 @@ pub async fn setup_streaming(
         .as_ref()
         .ok_or("No url_template in file/url response")?
         .clone();
-    let key_str = file_url
-        .key
-        .as_ref()
-        .ok_or("No key in file/url response")?;
+    let key_str = file_url.key.as_ref().ok_or("No key in file/url response")?;
 
-    let (_session_id, infos) = client.ensure_cmaf_session().await
+    let (_session_id, infos) = client
+        .ensure_cmaf_session()
+        .await
         .map_err(|e| format!("ensure_cmaf_session failed: {}", e))?;
 
     let session_key = crate::cmaf::derive_session_key(super::auth::CMAF_SEED, &infos)
@@ -168,7 +172,8 @@ pub async fn setup_streaming(
         file_url.n_segments,
         init_fetch_ms
     );
-    if init_info.segment_table.len() != file_url.n_segments as usize {
+    if init_info.segment_table.len() != file_url.n_segments as usize
+    {
         log::warn!(
             "[CMAF] MISMATCH for track {}: segment_table has {} entries but API says n_segments={}",
             track_id,
@@ -200,7 +205,8 @@ pub async fn download_full(
     client: &QobuzClient,
     track_id: u64,
     quality: Quality,
-) -> std::result::Result<Vec<u8>, String> {
+) -> std::result::Result<Vec<u8>, String>
+{
     download_full_with_progress(client, track_id, quality, None).await
 }
 
@@ -211,21 +217,21 @@ pub async fn download_full_with_progress(
     track_id: u64,
     quality: Quality,
     on_progress: Option<CmafProgressCallback>,
-) -> std::result::Result<Vec<u8>, String> {
+) -> std::result::Result<Vec<u8>, String>
+{
     let setup = setup_streaming(client, track_id, quality).await?;
     let http = build_cdn_client()?;
 
     let total_size: usize = setup.flac_header.len()
-        + setup.segment_table.iter().map(|s| s.byte_len as usize).sum::<usize>();
+        + setup
+            .segment_table
+            .iter()
+            .map(|s| s.byte_len as usize)
+            .sum::<usize>();
 
-    let segments = fetch_all_segments(
-        &http,
-        &setup.url_template,
-        setup.n_segments,
-        "CMAF-FULL",
-        on_progress,
-    )
-    .await?;
+    let segments =
+        fetch_all_segments(&http, &setup.url_template, setup.n_segments, "CMAF-FULL", on_progress)
+            .await?;
 
     let mut output = Vec::with_capacity(total_size);
     output.extend_from_slice(&setup.flac_header);
@@ -256,7 +262,8 @@ pub async fn download_raw(
     client: &QobuzClient,
     track_id: u64,
     quality: Quality,
-) -> std::result::Result<CmafRawBundle, String> {
+) -> std::result::Result<CmafRawBundle, String>
+{
     download_raw_with_progress(client, track_id, quality, None).await
 }
 
@@ -268,8 +275,11 @@ pub async fn download_raw_with_progress(
     track_id: u64,
     quality: Quality,
     on_progress: Option<CmafProgressCallback>,
-) -> std::result::Result<CmafRawBundle, String> {
-    let file_url = client.get_file_url(track_id, quality).await
+) -> std::result::Result<CmafRawBundle, String>
+{
+    let file_url = client
+        .get_file_url(track_id, quality)
+        .await
         .map_err(|e| format!("get_file_url failed: {}", e))?;
 
     let url_template = file_url
@@ -277,12 +287,11 @@ pub async fn download_raw_with_progress(
         .as_ref()
         .ok_or("No url_template in file/url response")?
         .clone();
-    let key_str = file_url
-        .key
-        .as_ref()
-        .ok_or("No key in file/url response")?;
+    let key_str = file_url.key.as_ref().ok_or("No key in file/url response")?;
 
-    let (_session_id, infos) = client.ensure_cmaf_session().await
+    let (_session_id, infos) = client
+        .ensure_cmaf_session()
+        .await
         .map_err(|e| format!("ensure_cmaf_session failed: {}", e))?;
 
     let session_key = crate::cmaf::derive_session_key(super::auth::CMAF_SEED, &infos)
@@ -307,14 +316,9 @@ pub async fn download_raw_with_progress(
         .to_vec();
 
     // Audio segments — encrypted, stored as-is
-    let segments = fetch_all_segments(
-        &http,
-        &url_template,
-        file_url.n_segments,
-        "CMAF-RAW",
-        on_progress,
-    )
-    .await?;
+    let segments =
+        fetch_all_segments(&http, &url_template, file_url.n_segments, "CMAF-RAW", on_progress)
+            .await?;
 
     log::info!(
         "[CMAF-RAW] Track {} bundle: init={}B, {} encrypted segments, total raw size={} bytes",
@@ -344,7 +348,8 @@ pub async fn download_raw_with_progress(
 /// rustls for smaller binary + no system SSL dependency. If Akamai ever
 /// surfaces a cert issue, adding the `native-tls` feature to qbz-qobuz is
 /// the escape hatch.
-fn build_cdn_client() -> std::result::Result<reqwest::Client, String> {
+fn build_cdn_client() -> std::result::Result<reqwest::Client, String>
+{
     reqwest::Client::builder()
         .connect_timeout(std::time::Duration::from_secs(10))
         .build()
@@ -363,14 +368,16 @@ async fn fetch_all_segments(
     n_segments: u8,
     log_tag: &str,
     on_progress: Option<CmafProgressCallback>,
-) -> std::result::Result<Vec<Vec<u8>>, String> {
+) -> std::result::Result<Vec<Vec<u8>>, String>
+{
     let semaphore = Arc::new(tokio::sync::Semaphore::new(CMAF_PREFETCH_CONCURRENCY));
     let seg_indices: Vec<u8> = (1..=n_segments).collect();
     let mut handles = Vec::with_capacity(seg_indices.len());
 
     let completed_count = Arc::new(std::sync::atomic::AtomicU32::new(0));
 
-    for seg_idx in seg_indices {
+    for seg_idx in seg_indices
+    {
         let sem = semaphore.clone();
         let http = http.clone();
         let seg_url = url_template.replace("$SEGMENT$", &seg_idx.to_string());
@@ -379,7 +386,10 @@ async fn fetch_all_segments(
         let counter = completed_count.clone();
 
         handles.push(tokio::spawn(async move {
-            let permit = sem.acquire_owned().await.map_err(|e| format!("semaphore: {}", e))?;
+            let permit = sem
+                .acquire_owned()
+                .await
+                .map_err(|e| format!("semaphore: {}", e))?;
             let seg_data = http
                 .get(&seg_url)
                 .header("User-Agent", "Mozilla/5.0")
@@ -390,7 +400,8 @@ async fn fetch_all_segments(
                 .await
                 .map_err(|e| format!("[{}] seg {} read: {}", log_tag, seg_idx, e))?;
             let bytes_this_segment = seg_data.len() as u64;
-            if let Some(cb) = progress {
+            if let Some(cb) = progress
+            {
                 let done = counter.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                 cb(CmafProgressUpdate {
                     segments_completed: done,
@@ -408,7 +419,8 @@ async fn fetch_all_segments(
 
     // Collect results in arrival order, then re-sort by segment index
     let mut segments: Vec<(u8, Vec<u8>)> = Vec::with_capacity(handles.len());
-    for handle in handles {
+    for handle in handles
+    {
         let (idx, data) = handle
             .await
             .map_err(|e| format!("[{}] task panic: {}", log_tag, e))?
@@ -440,27 +452,33 @@ pub fn decrypt_segments_into(
     segments: &[Vec<u8>],
     content_key: &[u8; 16],
     output: &mut Vec<u8>,
-) -> std::result::Result<(), String> {
-    for (seg_idx, seg_data) in segments.iter().enumerate() {
+) -> std::result::Result<(), String>
+{
+    for (seg_idx, seg_data) in segments.iter().enumerate()
+    {
         // seg_idx is 0-based here but the original segment number is idx+1
         let log_idx = seg_idx + 1;
         let crypto = crate::cmaf::parse_segment_crypto(seg_data)
             .map_err(|e| format!("CMAF seg {} parse: {}", log_idx, e))?;
 
         let mut data_pos = crypto.data_offset;
-        for entry in &crypto.entries {
+        for entry in &crypto.entries
+        {
             let frame_end = data_pos + entry.size as usize;
-            if frame_end > seg_data.len() {
+            if frame_end > seg_data.len()
+            {
                 return Err(format!("CMAF seg {} frame overflow", log_idx));
             }
             let output_start = output.len();
             output.extend_from_slice(&seg_data[data_pos..frame_end]);
-            if entry.flags != 0 {
+            if entry.flags != 0
+            {
                 crate::cmaf::decrypt_frame(content_key, &entry.iv, &mut output[output_start..]);
             }
             data_pos = frame_end;
         }
-        if data_pos < crypto.mdat_end && crypto.mdat_end <= seg_data.len() {
+        if data_pos < crypto.mdat_end && crypto.mdat_end <= seg_data.len()
+        {
             output.extend_from_slice(&seg_data[data_pos..crypto.mdat_end]);
         }
     }
@@ -470,6 +488,7 @@ pub fn decrypt_segments_into(
 // Silence "unused imports" if we end up not using everything at some point;
 // the Result alias is kept for future variants that want to surface ApiError.
 #[allow(dead_code)]
-fn _type_assertions() {
+fn _type_assertions()
+{
     let _: fn() -> Result<()> = || Ok(());
 }

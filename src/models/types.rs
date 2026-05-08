@@ -15,16 +15,20 @@ use std::collections::HashSet;
 /// Audio quality format IDs (matches Qobuz API format IDs)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 #[repr(u32)]
-pub enum Quality {
+pub enum Quality
+{
     Mp3 = 5,
     Lossless = 6,    // 16-bit/44.1kHz (CD Quality)
     HiRes = 7,       // 24-bit/≤96kHz
     UltraHiRes = 27, // 24-bit/>96kHz
 }
 
-impl Quality {
-    pub fn from_id(id: u32) -> Option<Self> {
-        match id {
+impl Quality
+{
+    pub fn from_id(id: u32) -> Option<Self>
+    {
+        match id
+        {
             5 => Some(Quality::Mp3),
             6 => Some(Quality::Lossless),
             7 => Some(Quality::HiRes),
@@ -33,12 +37,15 @@ impl Quality {
         }
     }
 
-    pub fn id(&self) -> u32 {
+    pub fn id(&self) -> u32
+    {
         *self as u32
     }
 
-    pub fn label(&self) -> &'static str {
-        match self {
+    pub fn label(&self) -> &'static str
+    {
+        match self
+        {
             Quality::Mp3 => "MP3 320kbps",
             Quality::Lossless => "FLAC 16-bit/44.1kHz",
             Quality::HiRes => "FLAC 24-bit/≤96kHz",
@@ -47,7 +54,8 @@ impl Quality {
     }
 
     /// Quality levels in descending order for fallback
-    pub fn fallback_order() -> &'static [Quality] {
+    pub fn fallback_order() -> &'static [Quality]
+    {
         &[
             Quality::UltraHiRes,
             Quality::HiRes,
@@ -58,8 +66,10 @@ impl Quality {
 
     /// Returns the next lower quality level, or None if already at the lowest (Mp3).
     /// Used for CDN fallback when a quality level consistently fails.
-    pub fn lower(&self) -> Option<Quality> {
-        match self {
+    pub fn lower(&self) -> Option<Quality>
+    {
+        match self
+        {
             Quality::UltraHiRes => Some(Quality::HiRes),
             Quality::HiRes => Some(Quality::Lossless),
             Quality::Lossless => Some(Quality::Mp3),
@@ -68,8 +78,10 @@ impl Quality {
     }
 }
 
-impl Default for Quality {
-    fn default() -> Self {
+impl Default for Quality
+{
+    fn default() -> Self
+    {
         Quality::Lossless
     }
 }
@@ -78,7 +90,8 @@ impl Default for Quality {
 
 /// User credentials and session info
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UserSession {
+pub struct UserSession
+{
     pub user_auth_token: String,
     pub user_id: u64,
     pub email: String,
@@ -92,7 +105,8 @@ pub struct UserSession {
 
 /// Stream URL response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamUrl {
+pub struct StreamUrl
+{
     pub url: String,
     pub format_id: u32,
     pub mime_type: String,
@@ -102,9 +116,11 @@ pub struct StreamUrl {
     pub restrictions: Vec<StreamRestriction>,
 }
 
-impl StreamUrl {
+impl StreamUrl
+{
     /// Check if the stream has restrictions that prevent playback
-    pub fn has_restrictions(&self) -> bool {
+    pub fn has_restrictions(&self) -> bool
+    {
         self.restrictions.iter().any(|r| {
             r.code == "FormatRestrictedByFormatAvailability"
                 || r.code == "SampleRestrictedByRightHolders"
@@ -113,7 +129,8 @@ impl StreamUrl {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct StreamRestriction {
+pub struct StreamRestriction
+{
     pub code: String,
 }
 
@@ -121,7 +138,8 @@ pub struct StreamRestriction {
 
 /// Response from POST /api.json/0.2/session/start
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionStartResponse {
+pub struct SessionStartResponse
+{
     pub session_id: String,
     pub expires_at: u64,
     #[serde(default)]
@@ -130,7 +148,8 @@ pub struct SessionStartResponse {
 
 /// Response from GET /api.json/0.2/file/url (CMAF segmented streaming)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TrackFileUrl {
+pub struct TrackFileUrl
+{
     #[serde(default)]
     pub url_template: Option<String>,
     #[serde(default)]
@@ -165,7 +184,8 @@ pub struct TrackFileUrl {
 
 /// Image set with multiple resolutions
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct ImageSet {
+pub struct ImageSet
+{
     pub small: Option<String>,
     pub thumbnail: Option<String>,
     pub large: Option<String>,
@@ -174,8 +194,10 @@ pub struct ImageSet {
     pub back: Option<String>,
 }
 
-impl ImageSet {
-    pub fn best(&self) -> Option<&String> {
+impl ImageSet
+{
+    pub fn best(&self) -> Option<&String>
+    {
         self.mega
             .as_ref()
             .or(self.extralarge.as_ref())
@@ -189,7 +211,8 @@ impl ImageSet {
 
 /// Track model
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Track {
+pub struct Track
+{
     #[serde(default)]
     pub id: u64,
     #[serde(default)]
@@ -229,7 +252,8 @@ pub struct Track {
 
 /// Album summary (embedded in track responses)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AlbumSummary {
+pub struct AlbumSummary
+{
     #[serde(default)]
     pub id: String,
     #[serde(default)]
@@ -242,7 +266,8 @@ pub struct AlbumSummary {
 
 /// Album model
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Album {
+pub struct Album
+{
     #[serde(default)]
     pub id: String,
     #[serde(default)]
@@ -278,7 +303,8 @@ pub struct Album {
 
 /// A downloadable extra bundled with an album (e.g. PDF booklet)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Goody {
+pub struct Goody
+{
     #[serde(default)]
     pub id: u64,
     #[serde(default)]
@@ -296,14 +322,16 @@ pub struct Goody {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TracksContainer {
+pub struct TracksContainer
+{
     pub items: Vec<Track>,
     pub total: u32,
 }
 
 /// Artist model
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct Artist {
+pub struct Artist
+{
     #[serde(default)]
     pub id: u64,
     #[serde(default)]
@@ -327,7 +355,8 @@ pub struct Artist {
 
 /// Artist biography content
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArtistBiography {
+pub struct ArtistBiography
+{
     pub summary: Option<String>,
     pub content: Option<String>,
     pub source: Option<String>,
@@ -335,7 +364,8 @@ pub struct ArtistBiography {
 
 /// Artist albums container
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ArtistAlbums {
+pub struct ArtistAlbums
+{
     pub items: Vec<Album>,
     pub total: u32,
     #[serde(default)]
@@ -346,7 +376,8 @@ pub struct ArtistAlbums {
 
 /// Playlist model
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Playlist {
+pub struct Playlist
+{
     #[serde(default)]
     pub id: u64,
     #[serde(default)]
@@ -371,7 +402,8 @@ pub struct Playlist {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct PlaylistOwner {
+pub struct PlaylistOwner
+{
     #[serde(default)]
     pub id: u64,
     #[serde(default)]
@@ -379,7 +411,8 @@ pub struct PlaylistOwner {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaylistGenre {
+pub struct PlaylistGenre
+{
     pub id: u64,
     pub name: String,
     pub slug: Option<String>,
@@ -387,7 +420,8 @@ pub struct PlaylistGenre {
 
 /// Lightweight playlist response with track IDs only
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaylistWithTrackIds {
+pub struct PlaylistWithTrackIds
+{
     #[serde(default)]
     pub id: u64,
     #[serde(default)]
@@ -413,7 +447,8 @@ pub struct PlaylistWithTrackIds {
 
 /// Result of checking for duplicate tracks in a playlist
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaylistDuplicateResult {
+pub struct PlaylistDuplicateResult
+{
     pub total_tracks: usize,
     pub duplicate_count: usize,
     pub duplicate_track_ids: HashSet<u64>,
@@ -423,7 +458,8 @@ pub struct PlaylistDuplicateResult {
 
 /// Label model
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Label {
+pub struct Label
+{
     pub id: u64,
     pub name: String,
 }
@@ -432,7 +468,8 @@ pub struct Label {
 
 /// Top-level response from /label/page
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LabelPageData {
+pub struct LabelPageData
+{
     pub id: u64,
     pub name: String,
     pub description: Option<String>,
@@ -450,14 +487,16 @@ pub struct LabelPageData {
 
 /// A container within label page (e.g. releases category)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LabelPageContainer {
+pub struct LabelPageContainer
+{
     pub id: Option<String>,
     pub data: Option<LabelPageGenericList>,
 }
 
 /// Generic list with has_more and items
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LabelPageGenericList {
+pub struct LabelPageGenericList
+{
     pub has_more: Option<bool>,
     pub items: Option<Vec<serde_json::Value>>,
 }
@@ -466,7 +505,8 @@ pub struct LabelPageGenericList {
 
 /// Magazine/publisher behind a press award.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AwardMagazine {
+pub struct AwardMagazine
+{
     #[serde(default, deserialize_with = "deserialize_string_or_int")]
     pub id: Option<String>,
     #[serde(default)]
@@ -479,7 +519,8 @@ pub struct AwardMagazine {
 /// Android's AwardDto marks everything nullable and Qobuz is loose
 /// about which ones come back on any given request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AwardPageData {
+pub struct AwardPageData
+{
     #[serde(default, deserialize_with = "deserialize_string_or_int")]
     pub id: Option<String>,
     #[serde(default)]
@@ -503,7 +544,8 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    Ok(match value {
+    Ok(match value
+    {
         Some(serde_json::Value::String(s)) => Some(s),
         Some(serde_json::Value::Number(n)) => Some(n.to_string()),
         _ => None,
@@ -511,20 +553,23 @@ where
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AwardPageContainer {
+pub struct AwardPageContainer
+{
     pub id: Option<String>,
     pub data: Option<AwardPageGenericList>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AwardPageGenericList {
+pub struct AwardPageGenericList
+{
     pub has_more: Option<bool>,
     pub items: Option<Vec<serde_json::Value>>,
 }
 
 /// Response from /label/explore
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LabelExploreResponse {
+pub struct LabelExploreResponse
+{
     pub has_more: Option<bool>,
     pub items: Option<Vec<serde_json::Value>>,
 }
@@ -545,7 +590,8 @@ pub struct LabelExploreResponse {
 /// tolerant so the same struct works if the server returns a bare
 /// items list or a nested one.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LabelListPage<T> {
+pub struct LabelListPage<T>
+{
     #[serde(default)]
     pub has_more: Option<bool>,
     #[serde(default = "Vec::new")]
@@ -564,7 +610,8 @@ pub struct LabelListPage<T> {
 /// for a label. Actual fields beyond the label identity are not fully
 /// known; everything past `id` / `name` / `description` is kept open.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct LabelStoryResponse {
+pub struct LabelStoryResponse
+{
     pub id: Option<u64>,
     pub name: Option<String>,
     #[serde(default)]
@@ -582,7 +629,8 @@ pub struct LabelStoryResponse {
 /// Response from /label/getList (POST). Bulk lookup that hydrates
 /// label metadata for a set of label IDs.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct LabelGetListResponse {
+pub struct LabelGetListResponse
+{
     #[serde(default = "Vec::new")]
     pub labels: Vec<Label>,
     /// Fallback for unknown envelope shape — preserved as raw JSON if
@@ -593,14 +641,16 @@ pub struct LabelGetListResponse {
 
 /// Genre model
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Genre {
+pub struct Genre
+{
     pub id: u64,
     pub name: String,
 }
 
 /// Genre info with full details
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenreInfo {
+pub struct GenreInfo
+{
     pub id: u64,
     pub name: String,
     #[serde(default)]
@@ -613,12 +663,14 @@ pub struct GenreInfo {
 
 /// Genre list response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenreListResponse {
+pub struct GenreListResponse
+{
     pub genres: GenreListContainer,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GenreListContainer {
+pub struct GenreListContainer
+{
     pub items: Vec<GenreInfo>,
 }
 
@@ -626,7 +678,8 @@ pub struct GenreListContainer {
 
 /// Search results container
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchResults {
+pub struct SearchResults
+{
     pub albums: Option<SearchResultsPage<Album>>,
     pub tracks: Option<SearchResultsPage<Track>>,
     pub artists: Option<SearchResultsPage<Artist>>,
@@ -634,7 +687,8 @@ pub struct SearchResults {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SearchResultsPage<T> {
+pub struct SearchResultsPage<T>
+{
     pub items: Vec<T>,
     pub total: u32,
     pub offset: u32,
@@ -643,7 +697,8 @@ pub struct SearchResultsPage<T> {
 
 /// Favorites container
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Favorites {
+pub struct Favorites
+{
     pub albums: Option<SearchResultsPage<Album>>,
     pub tracks: Option<SearchResultsPage<Track>>,
     pub artists: Option<SearchResultsPage<Artist>>,
@@ -653,13 +708,15 @@ pub struct Favorites {
 
 /// Discover index response
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverResponse {
+pub struct DiscoverResponse
+{
     pub containers: DiscoverContainers,
 }
 
 /// All discover containers
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverContainers {
+pub struct DiscoverContainers
+{
     pub playlists: Option<DiscoverContainer<DiscoverPlaylist>>,
     pub ideal_discography: Option<DiscoverContainer<DiscoverAlbum>>,
     pub playlists_tags: Option<DiscoverContainer<PlaylistTag>>,
@@ -672,21 +729,24 @@ pub struct DiscoverContainers {
 
 /// Generic discover container
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverContainer<T> {
+pub struct DiscoverContainer<T>
+{
     pub id: String,
     pub data: DiscoverData<T>,
 }
 
 /// Generic discover data with items
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverData<T> {
+pub struct DiscoverData<T>
+{
     pub has_more: bool,
     pub items: Vec<T>,
 }
 
 /// Playlist from discover endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverPlaylist {
+pub struct DiscoverPlaylist
+{
     pub id: u64,
     pub name: String,
     pub owner: PlaylistOwner,
@@ -700,14 +760,16 @@ pub struct DiscoverPlaylist {
 
 /// Playlist image from discover
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverPlaylistImage {
+pub struct DiscoverPlaylistImage
+{
     pub rectangle: Option<String>,
     pub covers: Option<Vec<String>>,
 }
 
 /// Playlist tag (for filtering)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaylistTag {
+pub struct PlaylistTag
+{
     pub id: u64,
     pub slug: String,
     pub name: String,
@@ -715,7 +777,8 @@ pub struct PlaylistTag {
 
 /// Raw playlist tag from /playlist/getTags
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RawPlaylistTag {
+pub struct RawPlaylistTag
+{
     pub slug: String,
     pub name_json: String,
     pub position: Option<String>,
@@ -725,20 +788,23 @@ pub struct RawPlaylistTag {
 
 /// Response from /playlist/getTags
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PlaylistTagsResponse {
+pub struct PlaylistTagsResponse
+{
     pub tags: Vec<RawPlaylistTag>,
 }
 
 /// Response from discover/playlists endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverPlaylistsResponse {
+pub struct DiscoverPlaylistsResponse
+{
     pub has_more: bool,
     pub items: Vec<DiscoverPlaylist>,
 }
 
 /// Album from discover endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverAlbum {
+pub struct DiscoverAlbum
+{
     pub id: String,
     pub title: String,
     pub version: Option<String>,
@@ -759,7 +825,8 @@ pub struct DiscoverAlbum {
 
 /// Album image from discover endpoint
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverAlbumImage {
+pub struct DiscoverAlbumImage
+{
     pub small: Option<String>,
     pub thumbnail: Option<String>,
     pub large: Option<String>,
@@ -767,7 +834,8 @@ pub struct DiscoverAlbumImage {
 
 /// Artist in discover album
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverArtist {
+pub struct DiscoverArtist
+{
     pub id: u64,
     pub name: String,
     pub roles: Option<Vec<String>>,
@@ -775,7 +843,8 @@ pub struct DiscoverArtist {
 
 /// Album dates from discover
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverAlbumDates {
+pub struct DiscoverAlbumDates
+{
     pub download: Option<String>,
     pub original: Option<String>,
     pub stream: Option<String>,
@@ -783,7 +852,8 @@ pub struct DiscoverAlbumDates {
 
 /// Audio info from discover album
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DiscoverAudioInfo {
+pub struct DiscoverAudioInfo
+{
     pub maximum_sampling_rate: Option<f64>,
     pub maximum_bit_depth: Option<u32>,
     pub maximum_channel_count: Option<u32>,
@@ -793,7 +863,8 @@ pub struct DiscoverAudioInfo {
 
 /// Top-level response from /artist/page
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistResponse {
+pub struct PageArtistResponse
+{
     pub id: u64,
     pub name: PageArtistName,
     pub artist_category: Option<String>,
@@ -808,36 +879,42 @@ pub struct PageArtistResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistName {
+pub struct PageArtistName
+{
     pub display: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistBiography {
+pub struct PageArtistBiography
+{
     pub content: Option<String>,
     pub source: Option<serde_json::Value>,
     pub language: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistImages {
+pub struct PageArtistImages
+{
     pub portrait: Option<PageArtistPortrait>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistPortrait {
+pub struct PageArtistPortrait
+{
     pub hash: String,
     pub format: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistSimilar {
+pub struct PageArtistSimilar
+{
     pub has_more: bool,
     pub items: Vec<PageArtistSimilarItem>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistSimilarItem {
+pub struct PageArtistSimilarItem
+{
     pub id: u64,
     pub name: PageArtistName,
     pub images: Option<PageArtistImages>,
@@ -845,7 +922,8 @@ pub struct PageArtistSimilarItem {
 
 /// A group of releases by type
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistReleaseGroup {
+pub struct PageArtistReleaseGroup
+{
     #[serde(rename = "type")]
     pub release_type: String,
     pub has_more: bool,
@@ -854,7 +932,8 @@ pub struct PageArtistReleaseGroup {
 
 /// A release item from /artist/page
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistRelease {
+pub struct PageArtistRelease
+{
     pub id: String,
     pub title: String,
     pub version: Option<String>,
@@ -875,20 +954,23 @@ pub struct PageArtistRelease {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistReleaseArtist {
+pub struct PageArtistReleaseArtist
+{
     pub id: u64,
     pub name: PageArtistName,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistReleaseContributor {
+pub struct PageArtistReleaseContributor
+{
     pub id: u64,
     pub name: String,
     pub roles: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistRights {
+pub struct PageArtistRights
+{
     pub streamable: Option<bool>,
     pub hires_streamable: Option<bool>,
     pub hires_purchasable: Option<bool>,
@@ -899,7 +981,8 @@ pub struct PageArtistRights {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistAward {
+pub struct PageArtistAward
+{
     pub id: u64,
     pub name: String,
     pub awarded_at: Option<String>,
@@ -917,7 +1000,8 @@ pub struct PageArtistAward {
 /// list covers the LegacyAwardDto field name the web app never sees
 /// but the mobile API uses.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct AlbumAward {
+pub struct AlbumAward
+{
     #[serde(
         default,
         alias = "awardId",
@@ -940,7 +1024,8 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    Ok(match value {
+    Ok(match value
+    {
         Some(serde_json::Value::String(s)) if !s.is_empty() => Some(s),
         Some(serde_json::Value::Number(n)) => Some(n.to_string()),
         _ => None,
@@ -952,7 +1037,8 @@ where
     D: serde::Deserializer<'de>,
 {
     let value = Option::<serde_json::Value>::deserialize(deserializer)?;
-    Ok(match value {
+    Ok(match value
+    {
         Some(serde_json::Value::String(s)) => Some(s),
         Some(serde_json::Value::Number(n)) => Some(n.to_string()),
         _ => None,
@@ -961,7 +1047,8 @@ where
 
 /// Track from /artist/page
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistTrack {
+pub struct PageArtistTrack
+{
     pub id: u64,
     pub title: String,
     pub version: Option<String>,
@@ -977,13 +1064,15 @@ pub struct PageArtistTrack {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistPhysicalSupport {
+pub struct PageArtistPhysicalSupport
+{
     pub media_number: Option<u32>,
     pub track_number: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistTrackAlbum {
+pub struct PageArtistTrackAlbum
+{
     pub id: String,
     pub title: String,
     pub version: Option<String>,
@@ -993,13 +1082,15 @@ pub struct PageArtistTrackAlbum {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistPlaylists {
+pub struct PageArtistPlaylists
+{
     pub has_more: bool,
     pub items: Vec<PageArtistPlaylist>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistPlaylist {
+pub struct PageArtistPlaylist
+{
     pub id: u64,
     pub title: Option<String>,
     pub description: Option<String>,
@@ -1010,19 +1101,22 @@ pub struct PageArtistPlaylist {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistPlaylistOwner {
+pub struct PageArtistPlaylistOwner
+{
     pub id: u64,
     pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PageArtistPlaylistImages {
+pub struct PageArtistPlaylistImages
+{
     pub rectangle: Option<Vec<String>>,
 }
 
 /// Response from /artist/getReleasesGrid
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReleasesGridResponse {
+pub struct ReleasesGridResponse
+{
     pub has_more: bool,
     pub items: Vec<PageArtistRelease>,
 }

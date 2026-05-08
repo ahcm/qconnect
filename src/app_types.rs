@@ -1,11 +1,11 @@
 use std::fmt;
 
-use crate::transport::queue::QueueItem;
+use crate::transport::QueueItem;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub use crate::transport::QueueVersion;
 pub use crate::transport::protocol::{QueueCommandType, RendererReport, RendererReportType};
-pub use crate::transport::queue::QueueVersion;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QConnectQueueState

@@ -13,7 +13,8 @@ use serde::{Deserialize, Serialize};
 
 /// Track info stored in the queue
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueTrack {
+pub struct QueueTrack
+{
     pub id: u64,
     pub title: String,
     /// Subtitle/edition info from Qobuz (e.g. "Player's Ball Mix") that
@@ -53,27 +54,32 @@ pub struct QueueTrack {
     pub source_item_id_hint: Option<String>,
 }
 
-fn default_streamable() -> bool {
+fn default_streamable() -> bool
+{
     true
 }
 
 /// Repeat mode options
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RepeatMode {
+pub enum RepeatMode
+{
     Off,
     All,
     One,
 }
 
-impl Default for RepeatMode {
-    fn default() -> Self {
+impl Default for RepeatMode
+{
+    fn default() -> Self
+    {
         Self::Off
     }
 }
 
 /// Queue state snapshot for frontend
 #[derive(Debug, Clone, Serialize)]
-pub struct QueueState {
+pub struct QueueState
+{
     pub current_track: Option<QueueTrack>,
     pub current_index: Option<usize>,
     pub upcoming: Vec<QueueTrack>,
@@ -88,7 +94,8 @@ pub struct QueueState {
 
 /// Current playback state
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum PlaybackState {
+pub enum PlaybackState
+{
     /// No track loaded
     Stopped,
     /// Track loaded and playing
@@ -99,15 +106,18 @@ pub enum PlaybackState {
     Loading,
 }
 
-impl Default for PlaybackState {
-    fn default() -> Self {
+impl Default for PlaybackState
+{
+    fn default() -> Self
+    {
         Self::Stopped
     }
 }
 
 /// Detailed playback status with position and duration
 #[derive(Debug, Clone, Serialize)]
-pub struct PlaybackStatus {
+pub struct PlaybackStatus
+{
     pub state: PlaybackState,
     pub track_id: Option<u64>,
     pub position_secs: u64,
@@ -119,8 +129,10 @@ pub struct PlaybackStatus {
     pub bit_depth: Option<u32>,
 }
 
-impl Default for PlaybackStatus {
-    fn default() -> Self {
+impl Default for PlaybackStatus
+{
+    fn default() -> Self
+    {
         Self {
             state: PlaybackState::Stopped,
             track_id: None,

@@ -1,10 +1,11 @@
 #![allow(dead_code)]
-use crate::transport::queue::QueueVersion;
+use crate::transport::QueueVersion;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RendererCommandType {
+pub enum RendererCommandType
+{
     SrvrRndrSetState,
     SrvrRndrSetVolume,
     SrvrRndrSetActive,
@@ -14,9 +15,12 @@ pub enum RendererCommandType {
     SrvrRndrMuteVolume,
 }
 
-impl RendererCommandType {
-    pub const fn as_message_type(self) -> &'static str {
-        match self {
+impl RendererCommandType
+{
+    pub const fn as_message_type(self) -> &'static str
+    {
+        match self
+        {
             Self::SrvrRndrSetState => "MESSAGE_TYPE_SRVR_RNDR_SET_STATE",
             Self::SrvrRndrSetVolume => "MESSAGE_TYPE_SRVR_RNDR_SET_VOLUME",
             Self::SrvrRndrSetActive => "MESSAGE_TYPE_SRVR_RNDR_SET_ACTIVE",
@@ -29,20 +33,24 @@ impl RendererCommandType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RendererServerCommand {
+pub struct RendererServerCommand
+{
     pub command_type: RendererCommandType,
     #[serde(default)]
     pub payload: Value,
 }
 
-impl RendererServerCommand {
-    pub const fn message_type(&self) -> &'static str {
+impl RendererServerCommand
+{
+    pub const fn message_type(&self) -> &'static str
+    {
         self.command_type.as_message_type()
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum RendererReportType {
+pub enum RendererReportType
+{
     RndrSrvrJoinSession,
     RndrSrvrDeviceInfoUpdated,
     RndrSrvrStateUpdated,
@@ -52,18 +60,23 @@ pub enum RendererReportType {
     RndrSrvrMaxAudioQualityChanged,
 }
 
-impl RendererReportType {
-    pub const fn as_message_type(self) -> &'static str {
-        match self {
+impl RendererReportType
+{
+    pub const fn as_message_type(self) -> &'static str
+    {
+        match self
+        {
             Self::RndrSrvrJoinSession => "MESSAGE_TYPE_RNDR_SRVR_JOIN_SESSION",
             Self::RndrSrvrDeviceInfoUpdated => "MESSAGE_TYPE_RNDR_SRVR_DEVICE_INFO_UPDATED",
             Self::RndrSrvrStateUpdated => "MESSAGE_TYPE_RNDR_SRVR_STATE_UPDATED",
             Self::RndrSrvrVolumeChanged => "MESSAGE_TYPE_RNDR_SRVR_VOLUME_CHANGED",
             Self::RndrSrvrVolumeMuted => "MESSAGE_TYPE_RNDR_SRVR_VOLUME_MUTED",
-            Self::RndrSrvrFileAudioQualityChanged => {
+            Self::RndrSrvrFileAudioQualityChanged =>
+            {
                 "MESSAGE_TYPE_RNDR_SRVR_FILE_AUDIO_QUALITY_CHANGED"
             }
-            Self::RndrSrvrMaxAudioQualityChanged => {
+            Self::RndrSrvrMaxAudioQualityChanged =>
+            {
                 "MESSAGE_TYPE_RNDR_SRVR_MAX_AUDIO_QUALITY_CHANGED"
             }
         }
@@ -71,7 +84,8 @@ impl RendererReportType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RendererReport {
+pub struct RendererReport
+{
     pub report_type: RendererReportType,
     pub action_uuid: String,
     pub queue_version_ref: QueueVersion,
@@ -79,13 +93,15 @@ pub struct RendererReport {
     pub payload: Value,
 }
 
-impl RendererReport {
+impl RendererReport
+{
     pub fn new(
         report_type: RendererReportType,
         action_uuid: impl Into<String>,
         queue_version_ref: QueueVersion,
         payload: Value,
-    ) -> Self {
+    ) -> Self
+    {
         Self {
             report_type,
             action_uuid: action_uuid.into(),
@@ -94,7 +110,8 @@ impl RendererReport {
         }
     }
 
-    pub const fn message_type(&self) -> &'static str {
+    pub const fn message_type(&self) -> &'static str
+    {
         self.report_type.as_message_type()
     }
 }

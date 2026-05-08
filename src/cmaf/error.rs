@@ -1,5 +1,6 @@
 #[derive(Debug, thiserror::Error)]
-pub enum CmafError {
+pub enum CmafError
+{
     #[error("Invalid infos format: {0}")]
     InvalidInfos(String),
     #[error("Invalid key format: {0}")]

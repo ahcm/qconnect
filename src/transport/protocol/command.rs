@@ -1,9 +1,10 @@
-use crate::transport::queue::QueueVersion;
+use crate::transport::QueueVersion;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-pub enum QueueCommandType {
+pub enum QueueCommandType
+{
     CtrlSrvrJoinSession,
     CtrlSrvrSetPlayerState,
     CtrlSrvrSetActiveRenderer,
@@ -26,9 +27,12 @@ pub enum QueueCommandType {
     CtrlSrvrAskForQueueState,
 }
 
-impl QueueCommandType {
-    pub const fn as_message_type(self) -> &'static str {
-        match self {
+impl QueueCommandType
+{
+    pub const fn as_message_type(self) -> &'static str
+    {
+        match self
+        {
             Self::CtrlSrvrJoinSession => "MESSAGE_TYPE_CTRL_SRVR_JOIN_SESSION",
             Self::CtrlSrvrSetPlayerState => "MESSAGE_TYPE_CTRL_SRVR_SET_PLAYER_STATE",
             Self::CtrlSrvrSetActiveRenderer => "MESSAGE_TYPE_CTRL_SRVR_SET_ACTIVE_RENDERER",
@@ -54,7 +58,8 @@ impl QueueCommandType {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QueueCommand {
+pub struct QueueCommand
+{
     pub command_type: QueueCommandType,
     pub action_uuid: String,
     pub queue_version_ref: QueueVersion,
@@ -62,13 +67,15 @@ pub struct QueueCommand {
     pub payload: Value,
 }
 
-impl QueueCommand {
+impl QueueCommand
+{
     pub fn new(
         command_type: QueueCommandType,
         action_uuid: impl Into<String>,
         queue_version_ref: QueueVersion,
         payload: Value,
-    ) -> Self {
+    ) -> Self
+    {
         Self {
             command_type,
             action_uuid: action_uuid.into(),
@@ -77,7 +84,8 @@ impl QueueCommand {
         }
     }
 
-    pub const fn message_type(&self) -> &'static str {
+    pub const fn message_type(&self) -> &'static str
+    {
         self.command_type.as_message_type()
     }
 }

@@ -2,7 +2,8 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum WsTransportError {
+pub enum WsTransportError
+{
     #[error("transport is already connected")]
     AlreadyConnected,
     #[error("transport is already running")]

@@ -8,7 +8,8 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use super::{
-    build_outbound_envelope,
+    OutboundEnvelope, ProtocolError, QueueCommand, QueueCommandType, RendererReport,
+    RendererReportType, build_outbound_envelope,
     queue_command_proto::{
         AskForQueueStateMessage, AskForRendererStateMessage, AutoplayLoadTracksMessage,
         AutoplayRemoveTracksMessage, ClearQueueMessage, DeviceCapabilitiesMessage,
@@ -22,22 +23,22 @@ use super::{
         SetPlayerStateMessage, SetPlayerStateQueueItemMessage, SetQueueStateMessage,
         SetQueueTrackWithContext, SetShuffleModeMessage, SetVolumeMessage,
     },
-    OutboundEnvelope, ProtocolError, QueueCommand, QueueCommandType, RendererReport,
-    RendererReportType,
 };
 
 static BATCH_SEQ: AtomicI32 = AtomicI32::new(1);
 
 pub fn build_qconnect_outbound_envelope(
     command: QueueCommand,
-) -> Result<OutboundEnvelope, ProtocolError> {
+) -> Result<OutboundEnvelope, ProtocolError>
+{
     let payload_bytes = encode_queue_command_batch(&command)?;
     let mut envelope = build_outbound_envelope(command);
     envelope.payload_bytes = Some(payload_bytes);
     Ok(envelope)
 }
 
-pub fn encode_queue_command_batch(command: &QueueCommand) -> Result<Vec<u8>, ProtocolError> {
+pub fn encode_queue_command_batch(command: &QueueCommand) -> Result<Vec<u8>, ProtocolError>
+{
     let message = map_queue_command(command)?;
     let batch = QConnectMessages {
         messages_time: Some(now_ms()),
@@ -49,7 +50,8 @@ pub fn encode_queue_command_batch(command: &QueueCommand) -> Result<Vec<u8>, Pro
 
 pub fn build_qconnect_renderer_outbound_envelope(
     report: RendererReport,
-) -> Result<OutboundEnvelope, ProtocolError> {
+) -> Result<OutboundEnvelope, ProtocolError>
+{
     let payload_bytes = encode_renderer_report_batch(&report)?;
     let message_type = report.message_type().to_string();
     let mut envelope = build_outbound_envelope(QueueCommand::new(
@@ -63,7 +65,8 @@ pub fn build_qconnect_renderer_outbound_envelope(
     Ok(envelope)
 }
 
-pub fn encode_renderer_report_batch(report: &RendererReport) -> Result<Vec<u8>, ProtocolError> {
+pub fn encode_renderer_report_batch(report: &RendererReport) -> Result<Vec<u8>, ProtocolError>
+{
     let message = map_renderer_report(report)?;
     let batch = QConnectMessages {
         messages_time: Some(now_ms()),
@@ -73,11 +76,13 @@ pub fn encode_renderer_report_batch(report: &RendererReport) -> Result<Vec<u8>, 
     Ok(batch.encode_to_vec())
 }
 
-fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, ProtocolError> {
+fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, ProtocolError>
+{
     let queue_version_ref = Some(to_proto_queue_version(command.queue_version_ref)?);
     let action_uuid = Some(action_uuid_bytes(&command.action_uuid)?);
 
-    match command.command_type {
+    match command.command_type
+    {
         QueueCommandType::CtrlSrvrJoinSession => Ok(QConnectMessage {
             message_type: Some(QConnectMessageType::MessageTypeCtrlSrvrJoinSession as i32),
             ctrl_srvr_join_session: Some(JoinSessionMessage {
@@ -157,7 +162,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
             }),
             ..Default::default()
         }),
-        QueueCommandType::CtrlSrvrQueueAddTracks => {
+        QueueCommandType::CtrlSrvrQueueAddTracks =>
+        {
             let track_ids = required_u32_list(&command.payload, "track_ids")?;
             let shuffle_seed = optional_i32(&command.payload, "shuffle_seed")?.map(|v| v as u32);
             let context_uuid = optional_uuid_bytes(&command.payload, &["context_uuid"])?;
@@ -179,7 +185,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
                 ..Default::default()
             })
         }
-        QueueCommandType::CtrlSrvrQueueLoadTracks => {
+        QueueCommandType::CtrlSrvrQueueLoadTracks =>
+        {
             let track_ids = required_u32_list(&command.payload, "track_ids")?;
             let queue_position = optional_i32(&command.payload, "queue_position")?;
             let shuffle_seed = optional_i32(&command.payload, "shuffle_seed")?.map(|v| v as u32);
@@ -206,7 +213,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
                 ..Default::default()
             })
         }
-        QueueCommandType::CtrlSrvrQueueInsertTracks => {
+        QueueCommandType::CtrlSrvrQueueInsertTracks =>
+        {
             let track_ids = required_u32_list(&command.payload, "track_ids")?;
             let insert_after = optional_i32(&command.payload, "insert_after")?;
             let shuffle_seed = optional_i32(&command.payload, "shuffle_seed")?.map(|v| v as u32);
@@ -232,7 +240,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
                 ..Default::default()
             })
         }
-        QueueCommandType::CtrlSrvrQueueRemoveTracks => {
+        QueueCommandType::CtrlSrvrQueueRemoveTracks =>
+        {
             let queue_item_ids = required_i32_list(&command.payload, "queue_item_ids")?;
             let autoplay_reset = optional_bool(&command.payload, "autoplay_reset", false);
             let autoplay_loading =
@@ -252,7 +261,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
                 ..Default::default()
             })
         }
-        QueueCommandType::CtrlSrvrQueueReorderTracks => {
+        QueueCommandType::CtrlSrvrQueueReorderTracks =>
+        {
             let queue_item_ids = required_i32_list(&command.payload, "queue_item_ids")?;
             let insert_after = optional_i32(&command.payload, "insert_after")?;
             let autoplay_reset = optional_bool(&command.payload, "autoplay_reset", false);
@@ -282,7 +292,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
             }),
             ..Default::default()
         }),
-        QueueCommandType::CtrlSrvrSetShuffleMode => {
+        QueueCommandType::CtrlSrvrSetShuffleMode =>
+        {
             let shuffle_mode = optional_bool(&command.payload, "shuffle_mode", false);
             let shuffle_seed = optional_i32(&command.payload, "shuffle_seed")?.map(|v| v as u32);
             let shuffle_pivot_queue_item_id =
@@ -305,7 +316,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
                 ..Default::default()
             })
         }
-        QueueCommandType::CtrlSrvrSetAutoplayMode => {
+        QueueCommandType::CtrlSrvrSetAutoplayMode =>
+        {
             let autoplay_mode = optional_bool(&command.payload, "autoplay_mode", false);
             // Android forces these defaults for setAutoplayMode.
             let autoplay_reset = optional_bool(&command.payload, "autoplay_reset", true);
@@ -323,7 +335,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
                 ..Default::default()
             })
         }
-        QueueCommandType::CtrlSrvrAutoplayLoadTracks => {
+        QueueCommandType::CtrlSrvrAutoplayLoadTracks =>
+        {
             let track_ids = required_u32_list(&command.payload, "track_ids")?;
             let context_uuid = optional_uuid_bytes(&command.payload, &["context_uuid"])?;
 
@@ -340,7 +353,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
                 ..Default::default()
             })
         }
-        QueueCommandType::CtrlSrvrAutoplayRemoveTracks => {
+        QueueCommandType::CtrlSrvrAutoplayRemoveTracks =>
+        {
             let queue_item_ids = required_i32_list(&command.payload, "queue_item_ids")?;
 
             Ok(QConnectMessage {
@@ -355,7 +369,8 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
                 ..Default::default()
             })
         }
-        QueueCommandType::CtrlSrvrSetQueueState => {
+        QueueCommandType::CtrlSrvrSetQueueState =>
+        {
             let tracks = required_tracks_with_context(&command.payload, "tracks")?;
             let shuffle_mode = optional_bool(&command.payload, "shuffle_mode", false);
             let shuffled_track_indexes =
@@ -391,9 +406,12 @@ fn map_queue_command(command: &QueueCommand) -> Result<QConnectMessage, Protocol
     }
 }
 
-fn map_renderer_report(report: &RendererReport) -> Result<QConnectMessage, ProtocolError> {
-    match report.report_type {
-        RendererReportType::RndrSrvrJoinSession => {
+fn map_renderer_report(report: &RendererReport) -> Result<QConnectMessage, ProtocolError>
+{
+    match report.report_type
+    {
+        RendererReportType::RndrSrvrJoinSession =>
+        {
             let initial_state = parse_renderer_initial_state(&report.payload)?;
             let is_active = Some(optional_bool(&report.payload, "is_active", false));
             let reason = optional_i32(&report.payload, "reason")?;
@@ -418,7 +436,8 @@ fn map_renderer_report(report: &RendererReport) -> Result<QConnectMessage, Proto
             rndr_srvr_device_info_updated: parse_device_info(&report.payload)?,
             ..Default::default()
         }),
-        RendererReportType::RndrSrvrStateUpdated => {
+        RendererReportType::RndrSrvrStateUpdated =>
+        {
             let queue_version = optional_queue_version(&report.payload, "queue_version")?
                 .unwrap_or(report.queue_version_ref);
             let current_position = optional_i32(&report.payload, "current_position")?;
@@ -439,9 +458,13 @@ fn map_renderer_report(report: &RendererReport) -> Result<QConnectMessage, Proto
 
             log::debug!(
                 "[QConnect/Proto] Encoding StateUpdated: playing={:?} pos={:?} dur={:?} qid={:?} next_qid={:?} qv={}.{}",
-                playing_state, current_position, duration,
-                current_qid, next_qid,
-                queue_version.major, queue_version.minor
+                playing_state,
+                current_position,
+                duration,
+                current_qid,
+                next_qid,
+                queue_version.major,
+                queue_version.minor
             );
 
             Ok(QConnectMessage {
@@ -499,32 +522,39 @@ fn map_renderer_report(report: &RendererReport) -> Result<QConnectMessage, Proto
     }
 }
 
-fn normalize_renderer_state_queue_item_id(queue_item_id: Option<i32>) -> Option<i32> {
-    match queue_item_id {
+fn normalize_renderer_state_queue_item_id(queue_item_id: Option<i32>) -> Option<i32>
+{
+    match queue_item_id
+    {
         Some(0) | None => None,
         other => other,
     }
 }
 
 fn to_proto_queue_version(
-    version: crate::transport::queue::QueueVersion,
-) -> Result<QueueVersionRef, ProtocolError> {
+    version: crate::transport::QueueVersion,
+) -> Result<QueueVersionRef, ProtocolError>
+{
     Ok(QueueVersionRef {
         major: Some(to_i32_from_u64(version.major, "queue_version_ref.major")?),
         minor: Some(to_i32_from_u64(version.minor, "queue_version_ref.minor")?),
     })
 }
 
-fn action_uuid_bytes(value: &str) -> Result<Vec<u8>, ProtocolError> {
+fn action_uuid_bytes(value: &str) -> Result<Vec<u8>, ProtocolError>
+{
     let uuid = Uuid::parse_str(value).map_err(|err| {
         ProtocolError::InvalidUuid(format!("action_uuid '{}' parse error: {err}", value))
     })?;
     Ok(uuid.as_bytes().to_vec())
 }
 
-fn optional_uuid_bytes(payload: &Value, keys: &[&str]) -> Result<Option<Vec<u8>>, ProtocolError> {
-    for key in keys {
-        if let Some(raw) = payload.get(*key).and_then(Value::as_str) {
+fn optional_uuid_bytes(payload: &Value, keys: &[&str]) -> Result<Option<Vec<u8>>, ProtocolError>
+{
+    for key in keys
+    {
+        if let Some(raw) = payload.get(*key).and_then(Value::as_str)
+        {
             let uuid = Uuid::parse_str(raw).map_err(|err| {
                 ProtocolError::InvalidUuid(format!("{} '{}' parse error: {err}", key, raw))
             })?;
@@ -534,7 +564,8 @@ fn optional_uuid_bytes(payload: &Value, keys: &[&str]) -> Result<Option<Vec<u8>>
     Ok(None)
 }
 
-fn required_i32_list(payload: &Value, key: &str) -> Result<Vec<i32>, ProtocolError> {
+fn required_i32_list(payload: &Value, key: &str) -> Result<Vec<i32>, ProtocolError>
+{
     let values = payload
         .get(key)
         .and_then(Value::as_array)
@@ -555,7 +586,8 @@ fn required_i32_list(payload: &Value, key: &str) -> Result<Vec<i32>, ProtocolErr
         .collect()
 }
 
-fn required_u32_list(payload: &Value, key: &str) -> Result<Vec<u32>, ProtocolError> {
+fn required_u32_list(payload: &Value, key: &str) -> Result<Vec<u32>, ProtocolError>
+{
     let values = payload
         .get(key)
         .and_then(Value::as_array)
@@ -580,8 +612,11 @@ fn required_u32_list(payload: &Value, key: &str) -> Result<Vec<u32>, ProtocolErr
         .collect()
 }
 
-fn optional_i32_list(payload: &Value, key: &str) -> Result<Vec<i32>, ProtocolError> {
-    let Some(values) = payload.get(key).and_then(Value::as_array) else {
+fn optional_i32_list(payload: &Value, key: &str) -> Result<Vec<i32>, ProtocolError>
+{
+    let Some(values) = payload.get(key).and_then(Value::as_array)
+    else
+    {
         return Ok(Vec::new());
     };
 
@@ -603,8 +638,11 @@ fn optional_i32_list(payload: &Value, key: &str) -> Result<Vec<i32>, ProtocolErr
 fn required_tracks_with_context(
     payload: &Value,
     key: &str,
-) -> Result<Vec<SetQueueTrackWithContext>, ProtocolError> {
-    let Some(values) = payload.get(key).and_then(Value::as_array) else {
+) -> Result<Vec<SetQueueTrackWithContext>, ProtocolError>
+{
+    let Some(values) = payload.get(key).and_then(Value::as_array)
+    else
+    {
         return Ok(Vec::new());
     };
 
@@ -637,10 +675,7 @@ fn required_tracks_with_context(
                 .transpose()?;
 
             Ok(SetQueueTrackWithContext {
-                track_id: Some(to_i32_from_i64(
-                    track_id,
-                    &format!("{key}[{idx}].track_id"),
-                )?),
+                track_id: Some(to_i32_from_i64(track_id, &format!("{key}[{idx}].track_id"))?),
                 context_uuid,
             })
         })
@@ -650,26 +685,36 @@ fn required_tracks_with_context(
 fn optional_queue_version(
     payload: &Value,
     key: &str,
-) -> Result<Option<crate::transport::queue::QueueVersion>, ProtocolError> {
-    let Some(version) = payload.get(key) else {
+) -> Result<Option<crate::transport::QueueVersion>, ProtocolError>
+{
+    let Some(version) = payload.get(key)
+    else
+    {
         return Ok(None);
     };
 
-    let Some(major) = version.get("major").and_then(Value::as_u64) else {
+    let Some(major) = version.get("major").and_then(Value::as_u64)
+    else
+    {
         return Ok(None);
     };
-    let Some(minor) = version.get("minor").and_then(Value::as_u64) else {
+    let Some(minor) = version.get("minor").and_then(Value::as_u64)
+    else
+    {
         return Ok(None);
     };
 
-    Ok(Some(crate::transport::queue::QueueVersion { major, minor }))
+    Ok(Some(crate::transport::QueueVersion { major, minor }))
 }
 
-fn optional_i32(payload: &Value, key: &str) -> Result<Option<i32>, ProtocolError> {
-    match payload.get(key) {
+fn optional_i32(payload: &Value, key: &str) -> Result<Option<i32>, ProtocolError>
+{
+    match payload.get(key)
+    {
         None => Ok(None),
         Some(value) if value.is_null() => Ok(None),
-        Some(value) => {
+        Some(value) =>
+        {
             let raw = value
                 .as_i64()
                 .or_else(|| value.as_u64().map(|v| v as i64))
@@ -681,9 +726,12 @@ fn optional_i32(payload: &Value, key: &str) -> Result<Option<i32>, ProtocolError
     }
 }
 
-fn optional_i32_any(payload: &Value, keys: &[&str]) -> Result<Option<i32>, ProtocolError> {
-    for key in keys {
-        if payload.get(*key).is_some() {
+fn optional_i32_any(payload: &Value, keys: &[&str]) -> Result<Option<i32>, ProtocolError>
+{
+    for key in keys
+    {
+        if payload.get(*key).is_some()
+        {
             return optional_i32(payload, key);
         }
     }
@@ -691,23 +739,31 @@ fn optional_i32_any(payload: &Value, keys: &[&str]) -> Result<Option<i32>, Proto
     Ok(None)
 }
 
-fn optional_bool(payload: &Value, key: &str, default: bool) -> bool {
+fn optional_bool(payload: &Value, key: &str, default: bool) -> bool
+{
     payload.get(key).and_then(Value::as_bool).unwrap_or(default)
 }
 
-fn optional_bool_any(payload: &Value, keys: &[&str], default: bool) -> bool {
-    for key in keys {
-        let Some(value) = payload.get(*key) else {
+fn optional_bool_any(payload: &Value, keys: &[&str], default: bool) -> bool
+{
+    for key in keys
+    {
+        let Some(value) = payload.get(*key)
+        else
+        {
             continue;
         };
 
-        if let Some(as_bool) = value.as_bool() {
+        if let Some(as_bool) = value.as_bool()
+        {
             return as_bool;
         }
-        if let Some(as_int) = value.as_i64() {
+        if let Some(as_int) = value.as_i64()
+        {
             return as_int != 0;
         }
-        if let Some(as_uint) = value.as_u64() {
+        if let Some(as_uint) = value.as_u64()
+        {
             return as_uint != 0;
         }
     }
@@ -715,13 +771,15 @@ fn optional_bool_any(payload: &Value, keys: &[&str], default: bool) -> bool {
     default
 }
 
-fn optional_string_any(payload: &Value, keys: &[&str]) -> Option<String> {
+fn optional_string_any(payload: &Value, keys: &[&str]) -> Option<String>
+{
     keys.iter()
         .find_map(|key| payload.get(*key).and_then(Value::as_str))
         .map(ToString::to_string)
 }
 
-fn parse_queue_version_ref(payload: &Value, key: &str) -> Option<QueueVersionRef> {
+fn parse_queue_version_ref(payload: &Value, key: &str) -> Option<QueueVersionRef>
+{
     let version = payload.get(key)?;
     let major = version
         .get("major")
@@ -738,16 +796,19 @@ fn parse_queue_version_ref(payload: &Value, key: &str) -> Option<QueueVersionRef
     })
 }
 
-fn parse_device_info(payload: &Value) -> Result<Option<DeviceInfoMessage>, ProtocolError> {
+fn parse_device_info(payload: &Value) -> Result<Option<DeviceInfoMessage>, ProtocolError>
+{
     let nested = payload
         .get("device_info")
         .or_else(|| payload.get("deviceInfo"));
-    let source = match nested {
+    let source = match nested
+    {
         Some(value) => value,
         None => payload,
     };
 
-    if !source.is_object() {
+    if !source.is_object()
+    {
         return Err(ProtocolError::InvalidPayload(
             "field 'device_info' must be an object".to_string(),
         ));
@@ -788,13 +849,16 @@ fn parse_device_info(payload: &Value) -> Result<Option<DeviceInfoMessage>, Proto
 
 fn parse_device_capabilities(
     source: &Value,
-) -> Result<Option<DeviceCapabilitiesMessage>, ProtocolError> {
+) -> Result<Option<DeviceCapabilitiesMessage>, ProtocolError>
+{
     let nested = source
         .get("capabilities")
         .or_else(|| source.get("deviceCapabilities"));
 
-    if let Some(caps) = nested {
-        if caps.is_object() {
+    if let Some(caps) = nested
+    {
+        if caps.is_object()
+        {
             return Ok(Some(DeviceCapabilitiesMessage {
                 min_audio_quality: optional_i32_any(
                     caps,
@@ -817,7 +881,8 @@ fn parse_device_capabilities(
     let max_aq = optional_i32_any(source, &["max_audio_quality", "maxAudioQuality"])?;
     let vol_rc = optional_i32_any(source, &["volume_remote_control", "volumeRemoteControl"])?;
 
-    if min_aq.is_some() || max_aq.is_some() || vol_rc.is_some() {
+    if min_aq.is_some() || max_aq.is_some() || vol_rc.is_some()
+    {
         return Ok(Some(DeviceCapabilitiesMessage {
             min_audio_quality: min_aq,
             max_audio_quality: max_aq,
@@ -830,16 +895,20 @@ fn parse_device_capabilities(
 
 fn parse_renderer_initial_state(
     payload: &Value,
-) -> Result<Option<RendererStateMessage>, ProtocolError> {
+) -> Result<Option<RendererStateMessage>, ProtocolError>
+{
     let nested = payload
         .get("initial_state")
         .or_else(|| payload.get("initialState"));
 
-    let Some(source) = nested else {
+    let Some(source) = nested
+    else
+    {
         return Ok(None);
     };
 
-    if !source.is_object() {
+    if !source.is_object()
+    {
         return Ok(None);
     }
 
@@ -864,16 +933,19 @@ fn parse_renderer_initial_state(
 
 fn parse_set_player_state_queue_item(
     payload: &Value,
-) -> Result<Option<SetPlayerStateQueueItemMessage>, ProtocolError> {
+) -> Result<Option<SetPlayerStateQueueItemMessage>, ProtocolError>
+{
     let nested = payload
         .get("current_queue_item")
         .or_else(|| payload.get("currentQueueItem"));
-    let source = match nested {
+    let source = match nested
+    {
         Some(value) => value,
         None => payload,
     };
 
-    if !source.is_object() {
+    if !source.is_object()
+    {
         return Err(ProtocolError::InvalidPayload(
             "field 'current_queue_item' must be an object".to_string(),
         ));
@@ -883,36 +955,42 @@ fn parse_set_player_state_queue_item(
         .or_else(|| parse_queue_version_ref(source, "queueVersion"));
     let id = optional_i32_any(source, &["id", "queue_item_id", "queueItemId"])?;
 
-    if queue_version.is_none() && id.is_none() {
+    if queue_version.is_none() && id.is_none()
+    {
         return Ok(None);
     }
 
     Ok(Some(SetPlayerStateQueueItemMessage { queue_version, id }))
 }
 
-fn parse_uuid(value: &str) -> Result<Vec<u8>, ProtocolError> {
+fn parse_uuid(value: &str) -> Result<Vec<u8>, ProtocolError>
+{
     let parsed = Uuid::parse_str(value)
         .map_err(|err| ProtocolError::InvalidUuid(format!("'{value}' parse error: {err}")))?;
     Ok(parsed.as_bytes().to_vec())
 }
 
-fn to_i32_from_u64(value: u64, field_name: &str) -> Result<i32, ProtocolError> {
+fn to_i32_from_u64(value: u64, field_name: &str) -> Result<i32, ProtocolError>
+{
     i32::try_from(value).map_err(|_| {
         ProtocolError::InvalidPayload(format!("field '{field_name}' is out of i32 range: {value}"))
     })
 }
 
-fn to_i32_from_i64(value: i64, field_name: &str) -> Result<i32, ProtocolError> {
+fn to_i32_from_i64(value: i64, field_name: &str) -> Result<i32, ProtocolError>
+{
     i32::try_from(value).map_err(|_| {
         ProtocolError::InvalidPayload(format!("field '{field_name}' is out of i32 range: {value}"))
     })
 }
 
-fn next_batch_seq() -> i32 {
+fn next_batch_seq() -> i32
+{
     BATCH_SEQ.fetch_add(1, Ordering::Relaxed)
 }
 
-fn now_ms() -> u64 {
+fn now_ms() -> u64
+{
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
@@ -920,16 +998,18 @@ fn now_ms() -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
+mod tests
+{
     use super::queue_command_proto::{QConnectMessageType, QConnectMessages};
+    use super::*;
     use super::{QueueCommand, RendererReport, RendererReportType};
+    use crate::transport::QueueVersion;
     use prost::Message;
-    use crate::transport::queue::QueueVersion;
     use serde_json::json;
 
     #[test]
-    fn encodes_add_tracks_command_into_binary_batch() {
+    fn encodes_add_tracks_command_into_binary_batch()
+    {
         let command = QueueCommand::new(
             QueueCommandType::CtrlSrvrQueueAddTracks,
             "85fa0dd6-7bd6-4b3c-8f43-b8ee22e65d5e",
@@ -946,7 +1026,8 @@ mod tests {
     }
 
     #[test]
-    fn rejects_non_uuid_action_id() {
+    fn rejects_non_uuid_action_id()
+    {
         let command = QueueCommand::new(
             QueueCommandType::CtrlSrvrQueueAddTracks,
             "not-a-uuid",
@@ -959,7 +1040,8 @@ mod tests {
     }
 
     #[test]
-    fn set_autoplay_mode_defaults_follow_android_behavior() {
+    fn set_autoplay_mode_defaults_follow_android_behavior()
+    {
         let command = QueueCommand::new(
             QueueCommandType::CtrlSrvrSetAutoplayMode,
             "2d8292c8-4f23-40f3-98a4-e3899eb0d03a",
@@ -972,7 +1054,8 @@ mod tests {
     }
 
     #[test]
-    fn encodes_join_session_message_with_device_info() {
+    fn encodes_join_session_message_with_device_info()
+    {
         let command = QueueCommand::new(
             QueueCommandType::CtrlSrvrJoinSession,
             "a043f34c-15f5-44bb-a5ad-06ce4e0c009d",
@@ -1011,7 +1094,8 @@ mod tests {
     }
 
     #[test]
-    fn encodes_set_player_state_with_current_queue_item() {
+    fn encodes_set_player_state_with_current_queue_item()
+    {
         let command = QueueCommand::new(
             QueueCommandType::CtrlSrvrSetPlayerState,
             "132db70b-d293-4576-bfd6-747c40ab764f",
@@ -1049,18 +1133,13 @@ mod tests {
             .as_ref()
             .expect("current queue item payload");
         assert_eq!(queue_item.id, Some(901));
-        assert_eq!(
-            queue_item.queue_version.as_ref().and_then(|v| v.major),
-            Some(5)
-        );
-        assert_eq!(
-            queue_item.queue_version.as_ref().and_then(|v| v.minor),
-            Some(3)
-        );
+        assert_eq!(queue_item.queue_version.as_ref().and_then(|v| v.major), Some(5));
+        assert_eq!(queue_item.queue_version.as_ref().and_then(|v| v.minor), Some(3));
     }
 
     #[test]
-    fn encodes_queue_load_tracks_with_android_like_fields() {
+    fn encodes_queue_load_tracks_with_android_like_fields()
+    {
         let command = QueueCommand::new(
             QueueCommandType::CtrlSrvrQueueLoadTracks,
             "f997cd72-d2ce-4121-a89b-75bf2be251ec",
@@ -1113,7 +1192,8 @@ mod tests {
     }
 
     #[test]
-    fn defaults_queue_load_tracks_autoplay_loading_to_false_when_omitted() {
+    fn defaults_queue_load_tracks_autoplay_loading_to_false_when_omitted()
+    {
         let command = QueueCommand::new(
             QueueCommandType::CtrlSrvrQueueLoadTracks,
             "f997cd72-d2ce-4121-a89b-75bf2be251ec",
@@ -1144,7 +1224,8 @@ mod tests {
     }
 
     #[test]
-    fn encodes_renderer_state_updated_report_with_queue_version() {
+    fn encodes_renderer_state_updated_report_with_queue_version()
+    {
         let report = RendererReport::new(
             RendererReportType::RndrSrvrStateUpdated,
             "6d8ef3af-b863-4581-9b72-17bd32792c6d",
@@ -1175,10 +1256,7 @@ mod tests {
             .expect("state payload");
         assert_eq!(state.playing_state, Some(2));
         assert_eq!(state.buffer_state, Some(2));
-        assert_eq!(
-            state.current_position.as_ref().and_then(|pos| pos.value),
-            Some(42_123)
-        );
+        assert_eq!(state.current_position.as_ref().and_then(|pos| pos.value), Some(42_123));
         assert_eq!(state.queue_version.as_ref().and_then(|v| v.major), Some(9));
         assert_eq!(state.queue_version.as_ref().and_then(|v| v.minor), Some(4));
         assert_eq!(state.current_queue_item_id, Some(9002));
@@ -1186,7 +1264,8 @@ mod tests {
     }
 
     #[test]
-    fn encodes_renderer_state_updated_omitting_zero_queue_item_ids() {
+    fn encodes_renderer_state_updated_omitting_zero_queue_item_ids()
+    {
         let report = RendererReport::new(
             RendererReportType::RndrSrvrStateUpdated,
             "9b7db27a-efac-4fc4-9f22-6034b4444697",
@@ -1215,7 +1294,8 @@ mod tests {
     }
 
     #[test]
-    fn build_renderer_outbound_envelope_uses_renderer_message_type() {
+    fn build_renderer_outbound_envelope_uses_renderer_message_type()
+    {
         let report = RendererReport::new(
             RendererReportType::RndrSrvrVolumeChanged,
             "0f892e1a-a2f4-4d18-82c6-31e8daf2ea0f",
@@ -1225,10 +1305,7 @@ mod tests {
 
         let envelope =
             build_qconnect_renderer_outbound_envelope(report).expect("renderer envelope");
-        assert_eq!(
-            envelope.message_type,
-            "MESSAGE_TYPE_RNDR_SRVR_VOLUME_CHANGED"
-        );
+        assert_eq!(envelope.message_type, "MESSAGE_TYPE_RNDR_SRVR_VOLUME_CHANGED");
         assert!(envelope.payload_bytes.is_some());
     }
 }

@@ -8,7 +8,8 @@ use super::error::CmafError;
 type Aes128CbcDec = cbc::Decryptor<aes::Aes128>;
 type Aes128Ctr = ctr::Ctr128BE<aes::Aes128>;
 
-fn hex_decode(hex: &str) -> Vec<u8> {
+fn hex_decode(hex: &str) -> Vec<u8>
+{
     (0..hex.len())
         .step_by(2)
         .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0))
@@ -19,9 +20,11 @@ fn hex_decode(hex: &str) -> Vec<u8> {
 ///
 /// `infos` format: `"salt_b64url.info_b64url"`
 /// `seed` is the hex-encoded app seed used as IKM for HKDF (provided by caller).
-pub fn derive_session_key(seed: &str, infos: &str) -> Result<[u8; 16], CmafError> {
+pub fn derive_session_key(seed: &str, infos: &str) -> Result<[u8; 16], CmafError>
+{
     let parts: Vec<&str> = infos.split('.').collect();
-    if parts.len() < 2 {
+    if parts.len() < 2
+    {
         return Err(CmafError::InvalidInfos(
             "session infos must have at least 2 dot-separated parts".into(),
         ));
@@ -34,7 +37,8 @@ pub fn derive_session_key(seed: &str, infos: &str) -> Result<[u8; 16], CmafError
 
     let hk = Hkdf::<Sha256>::new(Some(&salt), &ikm);
     let mut okm = [0u8; 16];
-    hk.expand(&info, &mut okm).map_err(|_| CmafError::HkdfExpand)?;
+    hk.expand(&info, &mut okm)
+        .map_err(|_| CmafError::HkdfExpand)?;
 
     Ok(okm)
 }
@@ -42,9 +46,11 @@ pub fn derive_session_key(seed: &str, infos: &str) -> Result<[u8; 16], CmafError
 /// Unwrap the per-track content key using the session key.
 ///
 /// `key_str` format: `"qbz-1.wrapped_key_b64url.iv_b64url"`
-pub fn unwrap_content_key(session_key: &[u8; 16], key_str: &str) -> Result<[u8; 16], CmafError> {
+pub fn unwrap_content_key(session_key: &[u8; 16], key_str: &str) -> Result<[u8; 16], CmafError>
+{
     let parts: Vec<&str> = key_str.split('.').collect();
-    if parts.len() < 3 {
+    if parts.len() < 3
+    {
         return Err(CmafError::InvalidKey(
             "key string must have at least 3 dot-separated parts".into(),
         ));
@@ -53,20 +59,18 @@ pub fn unwrap_content_key(session_key: &[u8; 16], key_str: &str) -> Result<[u8; 
     let wrapped = URL_SAFE_NO_PAD.decode(parts[1])?;
     let iv = URL_SAFE_NO_PAD.decode(parts[2])?;
 
-    if iv.len() != 16 {
-        return Err(CmafError::InvalidKey(format!(
-            "unwrap IV must be 16 bytes, got {}",
-            iv.len()
-        )));
+    if iv.len() != 16
+    {
+        return Err(CmafError::InvalidKey(format!("unwrap IV must be 16 bytes, got {}", iv.len())));
     }
 
     let mut buf = wrapped.clone();
-    let decrypted =
-        Aes128CbcDec::new(session_key.into(), iv.as_slice().into())
-            .decrypt_padded_mut::<aes::cipher::block_padding::Pkcs7>(&mut buf)
-            .map_err(|e| CmafError::AesDecrypt(format!("AES-CBC unwrap failed: {e}")))?;
+    let decrypted = Aes128CbcDec::new(session_key.into(), iv.as_slice().into())
+        .decrypt_padded_mut::<aes::cipher::block_padding::Pkcs7>(&mut buf)
+        .map_err(|e| CmafError::AesDecrypt(format!("AES-CBC unwrap failed: {e}")))?;
 
-    if decrypted.len() != 16 {
+    if decrypted.len() != 16
+    {
         return Err(CmafError::InvalidKey(format!(
             "unwrapped key must be 16 bytes, got {}",
             decrypted.len()
@@ -81,7 +85,8 @@ pub fn unwrap_content_key(session_key: &[u8; 16], key_str: &str) -> Result<[u8; 
 /// Decrypt a FLAC frame in-place using AES-128-CTR.
 ///
 /// `iv_8` = 8-byte IV from the segment UUID box entry, zero-padded to 16 bytes.
-pub fn decrypt_frame(content_key: &[u8; 16], iv_8: &[u8; 8], data: &mut [u8]) {
+pub fn decrypt_frame(content_key: &[u8; 16], iv_8: &[u8; 8], data: &mut [u8])
+{
     let mut nonce = [0u8; 16];
     nonce[..8].copy_from_slice(iv_8);
     Aes128Ctr::new(content_key.into(), &nonce.into()).apply_keystream(data);
@@ -97,12 +102,14 @@ pub fn compute_request_sig(
     args: &std::collections::BTreeMap<&str, String>,
     timestamp: &str,
     seed: &str,
-) -> String {
+) -> String
+{
     use md5::{Digest, Md5};
 
     let mut hasher = Md5::new();
     hasher.update(method.as_bytes());
-    for (k, v) in args {
+    for (k, v) in args
+    {
         hasher.update(k.as_bytes());
         hasher.update(v.as_bytes());
     }
@@ -113,13 +120,15 @@ pub fn compute_request_sig(
 }
 
 #[cfg(test)]
-mod tests {
+mod tests
+{
     use super::*;
 
     const TEST_SEED: &str = "00112233445566778899aabbccddeeff";
 
     #[test]
-    fn test_compute_request_sig() {
+    fn test_compute_request_sig()
+    {
         let mut args = std::collections::BTreeMap::new();
         args.insert("profile", "qbz-1".to_string());
         let sig = compute_request_sig("sessionstart", &args, "1775500000", TEST_SEED);
@@ -129,7 +138,8 @@ mod tests {
     }
 
     #[test]
-    fn test_decrypt_frame_roundtrip() {
+    fn test_decrypt_frame_roundtrip()
+    {
         let key = [1u8, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
         let iv = [1u8, 2, 3, 4, 5, 6, 7, 8];
         let original = b"Hello FLAC frame data here!".to_vec();
@@ -141,13 +151,15 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_session_key_invalid_infos() {
+    fn test_derive_session_key_invalid_infos()
+    {
         let result = derive_session_key(TEST_SEED, "no_dot_here");
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_unwrap_content_key_invalid_format() {
+    fn test_unwrap_content_key_invalid_format()
+    {
         let key = [0u8; 16];
         let result = unwrap_content_key(&key, "only.two");
         assert!(result.is_err());

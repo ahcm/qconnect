@@ -1,19 +1,19 @@
+mod app_logic;
+mod app_types;
 mod cmaf;
 mod models;
-mod qobuz;
-mod transport;
 mod player;
 mod qconnect;
-mod app_types;
-mod app_logic;
+mod qobuz;
+mod transport;
 
 use crate::app_types::QueueCommandType;
 use std::sync::OnceLock;
 use std::{fmt, sync::Arc, time::Duration};
 
+use crate::models::Quality;
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use crate::models::Quality;
 use qconnect::{ClientOptions, QconnectClient};
 use serde_json::json;
 use tokio::time::sleep;

@@ -2,7 +2,8 @@
 use thiserror::Error;
 
 #[derive(Debug, Error)]
-pub enum ProtocolError {
+pub enum ProtocolError
+{
     #[error("unknown queue event message type: {0}")]
     UnknownMessageType(String),
     #[error("unsupported queue command type for protobuf mapping: {0}")]

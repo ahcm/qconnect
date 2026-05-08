@@ -2,18 +2,17 @@
 use super::error::CmafError;
 
 const QBZ_INIT_UUID: [u8; 16] = [
-    0xc7, 0xc7, 0x5d, 0xf0, 0xfd, 0xd9, 0x51, 0xe9,
-    0x8f, 0xc2, 0x29, 0x71, 0xe4, 0xac, 0xf8, 0xd2,
+    0xc7, 0xc7, 0x5d, 0xf0, 0xfd, 0xd9, 0x51, 0xe9, 0x8f, 0xc2, 0x29, 0x71, 0xe4, 0xac, 0xf8, 0xd2,
 ];
 const QBZ_SEGMENT_UUID: [u8; 16] = [
-    0x3b, 0x42, 0x12, 0x92, 0x56, 0xf3, 0x5f, 0x75,
-    0x92, 0x36, 0x63, 0xb6, 0x9a, 0x1f, 0x52, 0xb2,
+    0x3b, 0x42, 0x12, 0x92, 0x56, 0xf3, 0x5f, 0x75, 0x92, 0x36, 0x63, 0xb6, 0x9a, 0x1f, 0x52, 0xb2,
 ];
 const FLAC_MAGIC: &[u8; 4] = b"fLaC";
 
 /// Info about one segment from the init segment's segment table.
 #[derive(Debug, Clone)]
-pub struct SegmentTableEntry {
+pub struct SegmentTableEntry
+{
     /// Byte size of this segment's decrypted FLAC frame data.
     pub byte_len: u32,
     /// Number of audio samples in this segment.
@@ -21,21 +20,24 @@ pub struct SegmentTableEntry {
 }
 
 /// FLAC header and segment table extracted from the init segment.
-pub struct InitInfo {
+pub struct InitInfo
+{
     pub flac_header: Vec<u8>,
     /// Per-segment sizes (indices 0..n_segments-1 correspond to segments 1..n_segments).
     pub segment_table: Vec<SegmentTableEntry>,
 }
 
 /// One frame entry from the segment's QBZ_SEGMENT_UUID box.
-pub struct FrameEntry {
+pub struct FrameEntry
+{
     pub size: u32,
     pub flags: u16,
     pub iv: [u8; 8],
 }
 
 /// Parsed crypto info from a segment's QBZ_SEGMENT_UUID box.
-pub struct SegmentCrypto {
+pub struct SegmentCrypto
+{
     /// Offset to the start of audio frame data (usually mdat payload).
     pub data_offset: usize,
     /// End of the mdat box content. Data between the last frame entry and this
@@ -46,15 +48,20 @@ pub struct SegmentCrypto {
 
 /// Walk ISO BMFF boxes and find the first UUID box matching `target_uuid`.
 /// Returns `(payload_start, box_end)` where payload_start is after the 16-byte UUID.
-fn find_uuid_box(data: &[u8], target_uuid: &[u8; 16]) -> Option<(usize, usize)> {
+fn find_uuid_box(data: &[u8], target_uuid: &[u8; 16]) -> Option<(usize, usize)>
+{
     let mut pos = 0;
-    while pos + 8 <= data.len() {
+    while pos + 8 <= data.len()
+    {
         let size = read_box_size(data, pos);
-        if size < 8 || pos + size > data.len() {
+        if size < 8 || pos + size > data.len()
+        {
             break;
         }
-        if &data[pos + 4..pos + 8] == b"uuid" && pos + 24 <= data.len() {
-            if &data[pos + 8..pos + 24] == target_uuid.as_ref() {
+        if &data[pos + 4..pos + 8] == b"uuid" && pos + 24 <= data.len()
+        {
+            if &data[pos + 8..pos + 24] == target_uuid.as_ref()
+            {
                 // payload_start = box_start + 8 (header) + 16 (uuid) = box_start + 24
                 return Some((pos + 24, pos + size));
             }
@@ -67,14 +74,18 @@ fn find_uuid_box(data: &[u8], target_uuid: &[u8; 16]) -> Option<(usize, usize)> 
 /// Walk ISO BMFF boxes and find the `mdat` box.
 /// Returns `(data_start, box_end)` where data_start = box_start + 8.
 #[allow(dead_code)]
-fn find_mdat_box(data: &[u8]) -> Option<(usize, usize)> {
+fn find_mdat_box(data: &[u8]) -> Option<(usize, usize)>
+{
     let mut pos = 0;
-    while pos + 8 <= data.len() {
+    while pos + 8 <= data.len()
+    {
         let size = read_box_size(data, pos);
-        if size < 8 || pos + size > data.len() {
+        if size < 8 || pos + size > data.len()
+        {
             break;
         }
-        if &data[pos + 4..pos + 8] == b"mdat" {
+        if &data[pos + 4..pos + 8] == b"mdat"
+        {
             return Some((pos + 8, pos + size));
         }
         pos += size;
@@ -83,7 +94,8 @@ fn find_mdat_box(data: &[u8]) -> Option<(usize, usize)> {
 }
 
 /// Parse the init segment (segment 0) to extract the FLAC header and segment table.
-pub fn parse_init_segment(data: &[u8]) -> Result<InitInfo, CmafError> {
+pub fn parse_init_segment(data: &[u8]) -> Result<InitInfo, CmafError>
+{
     let (payload_start, box_end) = find_uuid_box(data, &QBZ_INIT_UUID)
         .ok_or_else(|| CmafError::ParseError("init segment: QBZ_INIT_UUID box not found".into()))?;
 
@@ -92,37 +104,46 @@ pub fn parse_init_segment(data: &[u8]) -> Result<InitInfo, CmafError> {
 }
 
 /// Parse an audio segment to extract per-frame crypto info.
-pub fn parse_segment_crypto(data: &[u8]) -> Result<SegmentCrypto, CmafError> {
+pub fn parse_segment_crypto(data: &[u8]) -> Result<SegmentCrypto, CmafError>
+{
     // Walk all top-level boxes to find both UUID and mdat boxes.
     let mut uuid_box_start: Option<usize> = None;
     let mut mdat_end = data.len();
 
     let mut pos = 0;
-    while pos + 8 <= data.len() {
+    while pos + 8 <= data.len()
+    {
         let size = read_box_size(data, pos);
-        if size < 8 || pos + size > data.len() {
+        if size < 8 || pos + size > data.len()
+        {
             break;
         }
         let box_type = &data[pos + 4..pos + 8];
-        if box_type == b"uuid" && pos + 24 <= data.len() {
-            if &data[pos + 8..pos + 24] == QBZ_SEGMENT_UUID.as_ref() {
+        if box_type == b"uuid" && pos + 24 <= data.len()
+        {
+            if &data[pos + 8..pos + 24] == QBZ_SEGMENT_UUID.as_ref()
+            {
                 uuid_box_start = Some(pos);
             }
-        } else if box_type == b"mdat" {
+        }
+        else if box_type == b"mdat"
+        {
             mdat_end = pos + size;
         }
         pos += size;
     }
 
-    let box_start = uuid_box_start
-        .ok_or_else(|| CmafError::ParseError("audio segment: QBZ_SEGMENT_UUID box not found".into()))?;
+    let box_start = uuid_box_start.ok_or_else(|| {
+        CmafError::ParseError("audio segment: QBZ_SEGMENT_UUID box not found".into())
+    })?;
 
     parse_segment_uuid_payload(data, box_start, mdat_end)
 }
 
 // --- Internal helpers ---
 
-fn parse_init_uuid_payload(payload: &[u8]) -> Result<InitInfo, CmafError> {
+fn parse_init_uuid_payload(payload: &[u8]) -> Result<InitInfo, CmafError>
+{
     // Payload layout:
     //   [4B padding/version]
     //   [4B track_id]
@@ -138,7 +159,8 @@ fn parse_init_uuid_payload(payload: &[u8]) -> Result<InitInfo, CmafError> {
     //   [2B segment_count]
     //   Per segment: [4B byte_len][4B sample_count]
 
-    if payload.len() < 28 {
+    if payload.len() < 28
+    {
         return Err(CmafError::ParseError("init UUID payload too short".into()));
     }
 
@@ -150,7 +172,8 @@ fn parse_init_uuid_payload(payload: &[u8]) -> Result<InitInfo, CmafError> {
     a += 3; // channels + padding
     a += 6; // total_samples_count
 
-    if a + 2 > payload.len() {
+    if a + 2 > payload.len()
+    {
         return Err(CmafError::ParseError("init UUID payload truncated at raw_len".into()));
     }
     let raw_len = u16::from_be_bytes([payload[a], payload[a + 1]]) as usize;
@@ -166,7 +189,8 @@ fn parse_init_uuid_payload(payload: &[u8]) -> Result<InitInfo, CmafError> {
 
     // fLaC (4) + STREAMINFO block header (4) + STREAMINFO data (34) = 42 bytes
     let header_len = 4 + 4 + 34;
-    if flac_pos + header_len > raw_data.len() {
+    if flac_pos + header_len > raw_data.len()
+    {
         return Err(CmafError::ParseError("init UUID payload: STREAMINFO truncated".into()));
     }
 
@@ -174,7 +198,8 @@ fn parse_init_uuid_payload(payload: &[u8]) -> Result<InitInfo, CmafError> {
     // Set last-metadata-block flag in block header byte
     flac_header[4] |= 0x80;
 
-    if a + 1 > payload.len() {
+    if a + 1 > payload.len()
+    {
         return Ok(InitInfo {
             flac_header,
             segment_table: Vec::new(),
@@ -184,12 +209,15 @@ fn parse_init_uuid_payload(payload: &[u8]) -> Result<InitInfo, CmafError> {
     a += 1 + key_id_len;
 
     let mut segment_table = Vec::new();
-    if a + 2 <= payload.len() {
+    if a + 2 <= payload.len()
+    {
         let seg_count = u16::from_be_bytes([payload[a], payload[a + 1]]) as usize;
         a += 2;
 
-        for _ in 0..seg_count {
-            if a + 8 > payload.len() {
+        for _ in 0..seg_count
+        {
+            if a + 8 > payload.len()
+            {
                 break;
             }
             let byte_len =
@@ -198,7 +226,10 @@ fn parse_init_uuid_payload(payload: &[u8]) -> Result<InitInfo, CmafError> {
             let sample_count =
                 u32::from_be_bytes([payload[a], payload[a + 1], payload[a + 2], payload[a + 3]]);
             a += 4;
-            segment_table.push(SegmentTableEntry { byte_len, sample_count });
+            segment_table.push(SegmentTableEntry {
+                byte_len,
+                sample_count,
+            });
         }
     }
 
@@ -208,14 +239,18 @@ fn parse_init_uuid_payload(payload: &[u8]) -> Result<InitInfo, CmafError> {
         flac_header.len()
     );
 
-    Ok(InitInfo { flac_header, segment_table })
+    Ok(InitInfo {
+        flac_header,
+        segment_table,
+    })
 }
 
 fn parse_segment_uuid_payload(
     data: &[u8],
     uuid_box_start: usize,
     mdat_end: usize,
-) -> Result<SegmentCrypto, CmafError> {
+) -> Result<SegmentCrypto, CmafError>
+{
     // Layout after box header (8) + UUID (16) = offset 24 from uuid_box_start:
     //   [4B version/padding]
     //   [4B data_offset_raw]   — offset from uuid_box_start to audio data
@@ -224,10 +259,9 @@ fn parse_segment_uuid_payload(
     //   Per frame: [4B size][2B skip][2B flags][iv_size bytes IV]
 
     let base = uuid_box_start + 24; // start of payload after UUID
-    if base + 12 > data.len() {
-        return Err(CmafError::ParseError(
-            "segment UUID payload too short for header".into(),
-        ));
+    if base + 12 > data.len()
+    {
+        return Err(CmafError::ParseError("segment UUID payload too short for header".into()));
     }
 
     let mut a = base + 4; // skip 4-byte version/padding
@@ -244,14 +278,16 @@ fn parse_segment_uuid_payload(
     a += 3;
 
     let entry_size = 4 + 2 + 2 + iv_size; // size + skip + flags + iv
-    if a + frame_count * entry_size > data.len() {
+    if a + frame_count * entry_size > data.len()
+    {
         return Err(CmafError::ParseError(format!(
             "segment UUID: not enough data for {frame_count} entries of {entry_size} bytes"
         )));
     }
 
     let mut entries = Vec::with_capacity(frame_count);
-    for _ in 0..frame_count {
+    for _ in 0..frame_count
+    {
         let size = u32::from_be_bytes([data[a], data[a + 1], data[a + 2], data[a + 3]]);
         a += 4;
         a += 2; // skip 2 unknown bytes
@@ -266,15 +302,22 @@ fn parse_segment_uuid_payload(
         entries.push(FrameEntry { size, flags, iv });
     }
 
-    Ok(SegmentCrypto { data_offset, mdat_end, entries })
+    Ok(SegmentCrypto {
+        data_offset,
+        mdat_end,
+        entries,
+    })
 }
 
-fn read_box_size(data: &[u8], pos: usize) -> usize {
-    if pos + 8 > data.len() {
+fn read_box_size(data: &[u8], pos: usize) -> usize
+{
+    if pos + 8 > data.len()
+    {
         return 0;
     }
     let s = u32::from_be_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
-    match s {
+    match s
+    {
         0 => data.len() - pos,
         1..=7 => 0,
         s => s as usize,

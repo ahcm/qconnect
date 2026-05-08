@@ -7,7 +7,8 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CollectionKind {
+pub enum CollectionKind
+{
     Mixtape,
     Collection,
     ArtistCollection,
@@ -15,7 +16,8 @@ pub enum CollectionKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CollectionSourceType {
+pub enum CollectionSourceType
+{
     Manual,
     ArtistDiscography,
     // Reserved, not implemented in this spec:
@@ -24,14 +26,16 @@ pub enum CollectionSourceType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum CollectionPlayMode {
+pub enum CollectionPlayMode
+{
     InOrder,
     AlbumShuffle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum ItemType {
+pub enum ItemType
+{
     Album,
     Track,
     Playlist,
@@ -43,13 +47,15 @@ pub enum ItemType {
 /// providers — when a new LocalLibrary provider is added, zero changes here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum AlbumSource {
+pub enum AlbumSource
+{
     Qobuz,
     Local,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MixtapeCollection {
+pub struct MixtapeCollection
+{
     pub id: String,
     pub kind: CollectionKind,
     pub name: String,
@@ -70,7 +76,8 @@ pub struct MixtapeCollection {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MixtapeCollectionItem {
+pub struct MixtapeCollectionItem
+{
     pub collection_id: String,
     pub position: i32,
     pub item_type: ItemType,
@@ -85,11 +92,13 @@ pub struct MixtapeCollectionItem {
 }
 
 #[cfg(test)]
-mod tests {
+mod tests
+{
     use super::*;
 
     #[test]
-    fn kind_serde_roundtrip() {
+    fn kind_serde_roundtrip()
+    {
         let k = CollectionKind::ArtistCollection;
         let s = serde_json::to_string(&k).unwrap();
         assert_eq!(s, "\"artist_collection\"");
@@ -98,7 +107,8 @@ mod tests {
     }
 
     #[test]
-    fn collection_serde_omits_empty_items() {
+    fn collection_serde_omits_empty_items()
+    {
         let c = MixtapeCollection {
             id: "abc".into(),
             kind: CollectionKind::Mixtape,

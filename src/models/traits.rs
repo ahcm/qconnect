@@ -32,7 +32,8 @@ use super::events::CoreEvent;
 /// }
 /// ```
 #[async_trait]
-pub trait FrontendAdapter: Send + Sync {
+pub trait FrontendAdapter: Send + Sync
+{
     /// Called when the core emits an event.
     ///
     /// Implementations should handle this efficiently (non-blocking) since
@@ -52,42 +53,53 @@ pub trait FrontendAdapter: Send + Sync {
 pub struct NoOpAdapter;
 
 #[async_trait]
-impl FrontendAdapter for NoOpAdapter {
-    async fn on_event(&self, _event: CoreEvent) {
+impl FrontendAdapter for NoOpAdapter
+{
+    async fn on_event(&self, _event: CoreEvent)
+    {
         // Intentionally empty - events are discarded
     }
 }
 
 /// An adapter that logs all events (useful for debugging)
-pub struct LoggingAdapter {
+pub struct LoggingAdapter
+{
     prefix: String,
 }
 
-impl LoggingAdapter {
-    pub fn new(prefix: impl Into<String>) -> Self {
+impl LoggingAdapter
+{
+    pub fn new(prefix: impl Into<String>) -> Self
+    {
         Self {
             prefix: prefix.into(),
         }
     }
 }
 
-impl Default for LoggingAdapter {
-    fn default() -> Self {
+impl Default for LoggingAdapter
+{
+    fn default() -> Self
+    {
         Self::new("CoreEvent")
     }
 }
 
 #[async_trait]
-impl FrontendAdapter for LoggingAdapter {
-    async fn on_event(&self, event: CoreEvent) {
+impl FrontendAdapter for LoggingAdapter
+{
+    async fn on_event(&self, event: CoreEvent)
+    {
         log::debug!("{}: {:?}", self.prefix, event);
     }
 
-    async fn on_ready(&self) {
+    async fn on_ready(&self)
+    {
         log::info!("{}: Core is ready", self.prefix);
     }
 
-    async fn on_shutdown(&self) {
+    async fn on_shutdown(&self)
+    {
         log::info!("{}: Core is shutting down", self.prefix);
     }
 }

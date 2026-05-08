@@ -4,7 +4,8 @@
 use thiserror::Error;
 
 #[derive(Error, Debug)]
-pub enum ApiError {
+pub enum ApiError
+{
     #[error("Authentication failed: {0}")]
     AuthenticationError(String),
 

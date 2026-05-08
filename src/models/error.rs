@@ -7,7 +7,8 @@ use thiserror::Error;
 
 /// Top-level error type for QBZ operations
 #[derive(Error, Debug)]
-pub enum QbzError {
+pub enum QbzError
+{
     /// Authentication failed
     #[error("Authentication failed: {0}")]
     AuthError(String),
@@ -73,9 +74,11 @@ pub enum QbzError {
     Other(String),
 }
 
-impl QbzError {
+impl QbzError
+{
     /// Check if this error is recoverable (user can retry or fix)
-    pub fn is_recoverable(&self) -> bool {
+    pub fn is_recoverable(&self) -> bool
+    {
         matches!(
             self,
             QbzError::NetworkError(_)
@@ -86,8 +89,10 @@ impl QbzError {
     }
 
     /// Get an error code for frontend handling
-    pub fn code(&self) -> &'static str {
-        match self {
+    pub fn code(&self) -> &'static str
+    {
+        match self
+        {
             QbzError::AuthError(_) => "AUTH_ERROR",
             QbzError::ApiError(_) => "API_ERROR",
             QbzError::NetworkError(_) => "NETWORK_ERROR",
