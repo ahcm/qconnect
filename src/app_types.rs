@@ -1,12 +1,15 @@
+use std::fmt;
+
+use crate::transport::queue::QueueItem;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use crate::transport::queue::QueueItem;
 
-pub use crate::transport::queue::QueueVersion;
 pub use crate::transport::protocol::{QueueCommandType, RendererReport, RendererReportType};
+pub use crate::transport::queue::QueueVersion;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QConnectQueueState {
+pub struct QConnectQueueState
+{
     pub version: QueueVersion,
     pub queue_items: Vec<QueueItem>,
     pub shuffle_mode: bool,
@@ -14,8 +17,10 @@ pub struct QConnectQueueState {
     pub shuffle_order: Option<Vec<usize>>,
 }
 
-impl Default for QConnectQueueState {
-    fn default() -> Self {
+impl Default for QConnectQueueState
+{
+    fn default() -> Self
+    {
         Self {
             version: QueueVersion::default(),
             queue_items: Vec::new(),
@@ -27,15 +32,18 @@ impl Default for QConnectQueueState {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct QConnectRendererState {
+pub struct QConnectRendererState
+{
     pub current_track: Option<QueueItem>,
     pub next_track: Option<QueueItem>,
     pub current_position_ms: Option<u64>,
     pub playing_state: Option<i32>,
 }
 
-impl Default for QConnectRendererState {
-    fn default() -> Self {
+impl Default for QConnectRendererState
+{
+    fn default() -> Self
+    {
         Self {
             current_track: None,
             next_track: None,
@@ -47,45 +55,62 @@ impl Default for QConnectRendererState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "command", content = "payload")]
-pub enum RendererCommand {
-    SetState {
+pub enum RendererCommand
+{
+    SetState
+    {
         playing_state: Option<i32>,
         current_position_ms: Option<u64>,
         current_track: Option<QueueItem>,
         next_track: Option<QueueItem>,
     },
-    SetVolume {
+    SetVolume
+    {
         volume: Option<i32>,
         volume_delta: Option<i32>,
     },
-    MuteVolume {
-        value: bool,
+    MuteVolume
+    {
+        value: bool
     },
-    SetMaxAudioQuality {
-        max_audio_quality: i32,
+    SetMaxAudioQuality
+    {
+        max_audio_quality: i32
     },
-    SetActive {
-        active: bool,
+    SetActive
+    {
+        active: bool
     },
-    SetLoopMode {
-        loop_mode: i32,
+    SetLoopMode
+    {
+        loop_mode: i32
     },
-    SetShuffleMode {
-        shuffle_mode: bool,
+    SetShuffleMode
+    {
+        shuffle_mode: bool
     },
 }
 
 #[derive(Debug, Clone)]
-pub enum QconnectAppEvent {
+pub enum QconnectAppEvent
+{
     QueueUpdated(QConnectQueueState),
-    RendererCommandApplied { command: RendererCommand },
+    RendererCommandApplied
+    {
+        command: RendererCommand,
+    },
     RendererUpdated(QConnectRendererState),
-    SessionManagementEvent { message_type: String, payload: Value },
+    SessionManagementEvent
+    {
+        message_type: String,
+        payload: Value,
+    },
 }
 
 use async_trait::async_trait;
 
 #[async_trait]
-pub trait QconnectEventSink: Send + Sync {
+pub trait QconnectEventSink: Send + Sync
+{
     async fn on_event(&self, event: QconnectAppEvent);
 }
