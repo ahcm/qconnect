@@ -1,10 +1,10 @@
 [package]
 name = "qconnect"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 authors = ["Andreas Hauser <andreas.github@icloud.com>"]
-description = "Standalone qobuz connect client using crates from qbz"
-license = "CC-BY-SA-4.0"
+description = "Standalone qobuz connect client"
+license = "EUPL-1.2"
 keywords = ["qobuz-connect", "qobuz", "command-line", "CLI", "audio"]
 repository = "https://github.com/ahcm/qconnect"
 
