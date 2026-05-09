@@ -1,9 +1,26 @@
 # qconnect
 
-Standalone Qobuz Connect CLI client built on the `qconnect-*` Rust crates from
-[`vicrodh/qbz`](https://github.com/vicrodh/qbz).
+Standalone Qobuz Connect CLI client originally based on the `qconnect-*` Rust
+crates from [`vicrodh/qbz`](https://github.com/vicrodh/qbz).
+
+## TLDR
+
+```sh
+cargo install qconnect
+# rehash (zsh) / hash -r (bash) / ...
+qconnect serve
+# In your player app choose qconnect-cli (hostname)
+```
 
 ## Install
+
+Binaries can be found on the release pages.
+
+```sh
+cargo install qconnect
+```
+
+### Development version
 
 ```sh
 cargo install --git https://github.com/ahcm/qconnect
@@ -17,22 +34,15 @@ build made on a compatible distro:
 ```sh
 cargo build --release
 ```
-
-Avoid shipping Alpine/musl/static binaries as general-purpose audio builds.
-ALSA often resolves the default device through runtime-loaded modules such as
-PulseAudio/PipeWire config plugins. Static musl builds can link `libasound` but
-still fail at runtime with messages like `Dynamic loading not supported` or
-`Unknown PCM default` when those ALSA modules cannot be loaded on the target
-system.
-
-Musl/static builds are still reasonable for state/control use:
-
-```sh
-qconnect serve --no-audio
-```
-
-For audio on a target host, use `qconnect audio-devices` and run a glibc build
-with a listed backend/device id when needed.
+> [!NOTE]  
+> Avoid shipping Alpine/musl/static binaries as general-purpose audio builds.
+> ALSA often resolves the default device through runtime-loaded modules such as
+> PulseAudio/PipeWire config plugins. Static musl builds can link `libasound` but
+> still fail at runtime with messages like `Dynamic loading not supported` or
+> `Unknown PCM default` when those ALSA modules cannot be loaded on the target
+> system.
+>
+> Musl/static builds are still reasonable for state/control use.
 
 ## Credentials
 
@@ -82,11 +92,11 @@ websocket endpoint and JWT.
 Run as a headless Qobuz Connect renderer:
 
 ```sh
-qconnect --device-name 'qconnect cli' serve
+qconnect serve
 ```
 
 This makes the process visible to other Qobuz Connect controllers and plays
-audio locally. Use `serve --no-audio` for state-only rendering.
+audio locally. Use `serve --no-audio` if you only want MPRIS updates.
 
 List Linux audio backend/device ids:
 
