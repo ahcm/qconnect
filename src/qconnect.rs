@@ -1664,6 +1664,7 @@ struct AudioPlayback
     printer: Printer,
     preferred_quality: Quality,
     loading: Mutex<Option<JoinHandle<()>>>,
+    loading_queue_item_id: Arc<Mutex<Option<u64>>>,
     preloading: Arc<Mutex<Option<JoinHandle<()>>>>,
     preloading_queue_item_id: Arc<Mutex<Option<u64>>>,
     cache: Arc<TrackCache>,
@@ -1721,6 +1722,7 @@ impl AudioPlayback
             printer,
             preferred_quality: options.audio_quality,
             loading: Mutex::new(None),
+            loading_queue_item_id: Arc::new(Mutex::new(None)),
             preloading: Arc::new(Mutex::new(None)),
             preloading_queue_item_id: Arc::new(Mutex::new(None)),
             cache,
@@ -1741,31 +1743,39 @@ impl AudioPlayback
             connect_quality_to_qobuz(max_audio_quality).unwrap_or(self.preferred_quality);
         let quality = lower_quality(self.preferred_quality, remote_max_quality);
         let current = self.player.get_playback_event();
-        if current.queue_item_id == track.queue_item_id
+        if current.queue_item_id == track.queue_item_id && self.player.has_loaded_audio()
         {
-            if self.player.has_loaded_audio()
+            if let Some(pos_ms) = position_ms
             {
-                if let Some(pos_ms) = position_ms
+                let current_pos_ms = current.position.saturating_mul(1000);
+                if pos_ms.abs_diff(current_pos_ms) > 3000
                 {
-                    let current_pos_ms = current.position.saturating_mul(1000);
-                    if pos_ms.abs_diff(current_pos_ms) > 3000
+                    if let Err(err) = self.player.seek(pos_ms / 1000)
                     {
-                        if let Err(err) = self.player.seek(pos_ms / 1000)
-                        {
-                            self.printer.event(
-                                "audio_error",
-                                json!({ "error": err, "track_id": track.track_id }),
-                            );
-                        }
+                        self.printer.event(
+                            "audio_error",
+                            json!({ "error": err, "track_id": track.track_id }),
+                        );
                     }
                 }
-                if let Err(err) = self.player.resume()
-                {
-                    self.printer
-                        .event("audio_error", json!({ "error": err, "track_id": track.track_id }));
-                }
             }
-            // Whether loaded or still initializing: preload next track and don't restart current.
+            if let Err(err) = self.player.resume()
+            {
+                self.printer
+                    .event("audio_error", json!({ "error": err, "track_id": track.track_id }));
+            }
+
+            if let Some(next_track) = next_track
+            {
+                self.ensure_preloaded(next_track, max_audio_quality).await;
+            }
+            return;
+        }
+
+        // Loading task is in progress for this track — don't abort it.
+        // Preloading is handled inline by the loading task after audio_started.
+        if *self.loading_queue_item_id.lock().await == Some(track.queue_item_id)
+        {
             if let Some(next_track) = next_track
             {
                 self.ensure_preloaded(next_track, max_audio_quality).await;
@@ -1933,6 +1943,7 @@ impl AudioPlayback
             handle.abort();
         }
         *self.preloading_queue_item_id.lock().await = None;
+        *self.loading_queue_item_id.lock().await = Some(track.queue_item_id);
 
         let player = Arc::clone(&self.player);
         let client = self.client.clone();
@@ -1941,6 +1952,7 @@ impl AudioPlayback
         let control_sender = self.control_sender.clone();
         let preloading = Arc::clone(&self.preloading);
         let preloading_queue_item_id = Arc::clone(&self.preloading_queue_item_id);
+        let loading_queue_item_id = Arc::clone(&self.loading_queue_item_id);
         let cache = Arc::clone(&self.cache);
         let track_id = track.track_id;
         let handle = tokio::spawn(async move {
@@ -2096,6 +2108,7 @@ impl AudioPlayback
                             });
                             *preloading.lock().await = Some(prefetch_handle);
                         }
+                        *loading_queue_item_id.lock().await = None;
                         return;
                     }
                     Err(err) =>
@@ -2129,6 +2142,7 @@ impl AudioPlayback
             {
                 let _ = sender.send(MprisCommand::Next);
             }
+            *loading_queue_item_id.lock().await = None;
         });
         *self.loading.lock().await = Some(handle);
     }
@@ -2397,6 +2411,7 @@ impl AudioPlayback
             stream_error,
             track_id: Some(event.track_id),
             queue_item_id: Some(event_queue_item.queue_item_id),
+            is_active: fallback.is_active,
         };
         if let Some(mpris) = &self.mpris
         {
@@ -2764,8 +2779,12 @@ impl CliEventSink
                 playback.max_audio_quality = *max_audio_quality;
                 None
             }
-            RendererCommand::SetActive { .. }
-            | RendererCommand::SetLoopMode { .. }
+            RendererCommand::SetActive { active } =>
+            {
+                playback.is_active = *active;
+                None
+            }
+            RendererCommand::SetLoopMode { .. }
             | RendererCommand::SetShuffleMode { .. } => None,
         };
         drop(playback);
@@ -2815,6 +2834,7 @@ struct PlaybackState
     volume: i32,
     muted: bool,
     max_audio_quality: i32,
+    is_active: bool,
     updated_at: Instant,
 }
 
@@ -2831,6 +2851,7 @@ impl Default for PlaybackState
             volume: 100,
             muted: false,
             max_audio_quality: AUDIO_QUALITY_HIRES_LEVEL2,
+            is_active: true,
             updated_at: Instant::now(),
         }
     }
@@ -2856,6 +2877,7 @@ impl PlaybackState
             stream_error: false,
             track_id: self.current_track.as_ref().map(|track| track.track_id),
             queue_item_id: self.current_track.as_ref().map(|track| track.queue_item_id),
+            is_active: self.is_active,
         }
     }
 }
@@ -2870,6 +2892,7 @@ struct PlaybackSnapshot
     stream_error: bool,
     track_id: Option<u64>,
     queue_item_id: Option<u64>,
+    is_active: bool,
 }
 
 #[allow(dead_code)]
