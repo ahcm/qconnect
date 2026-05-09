@@ -1655,6 +1655,13 @@ impl TrackCache
         }
         cacache::metadata(&self.l2_path, &key).await.is_ok()
     }
+
+    async fn invalidate(&self, track_id: u64, quality: Quality)
+    {
+        let key = format!("{}_{}", track_id, quality.label());
+        self.l1.invalidate(&key).await;
+        let _ = cacache::remove(&self.l2_path, &key).await;
+    }
 }
 
 struct AudioPlayback
@@ -1840,9 +1847,10 @@ impl AudioPlayback
                     return;
                 }
                 // has() returned true but get_cached() returned None — cache entry is corrupt.
-                // Fall through to download.
+                // Evict it so has() returns false on subsequent calls, then fall through to download.
                 self.printer
                     .event("audio_cache_corrupt", json!({ "track_id": next_track.track_id }));
+                self.cache.invalidate(next_track.track_id, quality).await;
             }
             else
             {
@@ -2023,10 +2031,12 @@ impl AudioPlayback
                                 else
                                 {
                                     // has() true but get_cached() failed — cache entry is corrupt.
+                                    // Evict it so subsequent has() calls return false.
                                     printer.event(
                                         "audio_cache_corrupt",
                                         json!({ "track_id": next_track.track_id }),
                                     );
+                                    cache.invalidate(next_track.track_id, quality).await;
                                     false
                                 }
                             }
