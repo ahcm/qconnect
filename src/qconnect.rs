@@ -1637,30 +1637,31 @@ impl TrackCache
             return Some(data);
         }
 
-        if let Ok(data) = cacache::read(&self.l2_path, key).await
+        match cacache::read(&self.l2_path, key).await
         {
-            self.l1.insert(key.to_string(), data.clone()).await;
-            return Some(data);
+            Ok(data) =>
+            {
+                self.l1.insert(key.to_string(), data.clone()).await;
+                Some(data)
+            }
+            Err(_) =>
+            {
+                // Remove stale or corrupt disk entry so has() returns false on the next call.
+                let _ = cacache::remove(&self.l2_path, key).await;
+                None
+            }
         }
-
-        None
     }
 
     async fn has(&self, track_id: u64, quality: Quality) -> bool
     {
         let key = format!("{}_{}", track_id, quality.label());
-        if self.l1.contains_key(&key)
+        // Use get() rather than contains_key() to avoid moka's write-buffer lag after invalidation.
+        if self.l1.get(&key).await.is_some()
         {
             return true;
         }
         cacache::metadata(&self.l2_path, &key).await.is_ok()
-    }
-
-    async fn invalidate(&self, track_id: u64, quality: Quality)
-    {
-        let key = format!("{}_{}", track_id, quality.label());
-        self.l1.invalidate(&key).await;
-        let _ = cacache::remove(&self.l2_path, &key).await;
     }
 }
 
@@ -1846,11 +1847,10 @@ impl AudioPlayback
                     }
                     return;
                 }
-                // has() returned true but get_cached() returned None — cache entry is corrupt.
-                // Evict it so has() returns false on subsequent calls, then fall through to download.
+                // has() returned true but get_cached() returned None — stale disk entry.
+                // get_cached() already removed it from disk; fall through to download.
                 self.printer
                     .event("audio_cache_corrupt", json!({ "track_id": next_track.track_id }));
-                self.cache.invalidate(next_track.track_id, quality).await;
             }
             else
             {
@@ -2030,13 +2030,12 @@ impl AudioPlayback
                                 }
                                 else
                                 {
-                                    // has() true but get_cached() failed — cache entry is corrupt.
-                                    // Evict it so subsequent has() calls return false.
+                                    // has() true but get_cached() returned None — stale disk entry.
+                                    // get_cached() already removed it from disk; fall through to download.
                                     printer.event(
                                         "audio_cache_corrupt",
                                         json!({ "track_id": next_track.track_id }),
                                     );
-                                    cache.invalidate(next_track.track_id, quality).await;
                                     false
                                 }
                             }
