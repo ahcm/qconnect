@@ -2793,8 +2793,7 @@ impl CliEventSink
                 playback.is_active = *active;
                 None
             }
-            RendererCommand::SetLoopMode { .. }
-            | RendererCommand::SetShuffleMode { .. } => None,
+            RendererCommand::SetLoopMode { .. } | RendererCommand::SetShuffleMode { .. } => None,
         };
         drop(playback);
 
