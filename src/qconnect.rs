@@ -2711,6 +2711,11 @@ impl CliEventSink
                 {
                     playback.next_track = Some(track.clone());
                 }
+                // current=None, next=None is the back-press (<<) restart signal.
+                if current_track.is_none() && next_track.is_none()
+                {
+                    seek_to = Some(0);
+                }
                 playback.updated_at = Instant::now();
 
                 let state = playing_state.unwrap_or(playback.playing_state);
