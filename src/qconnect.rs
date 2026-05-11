@@ -24,9 +24,6 @@ use tokio::sync::{Mutex, broadcast, mpsc};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
-const PLAYING_STATE_STOPPED: i32 = 1;
-const PLAYING_STATE_PLAYING: i32 = 2;
-const PLAYING_STATE_PAUSED: i32 = 3;
 const BUFFER_STATE_OK: i32 = 2;
 const JOIN_SESSION_REASON_CONTROLLER_REQUEST: i32 = 1;
 const AUDIO_QUALITY_MP3: i32 = 1;

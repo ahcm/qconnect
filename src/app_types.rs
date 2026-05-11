@@ -7,6 +7,10 @@ use serde_json::Value;
 pub use crate::transport::QueueVersion;
 pub use crate::transport::protocol::{QueueCommandType, RendererReport, RendererReportType};
 
+pub const PLAYING_STATE_STOPPED: i32 = 1;
+pub const PLAYING_STATE_PLAYING: i32 = 2;
+pub const PLAYING_STATE_PAUSED: i32 = 3;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct QConnectQueueState
 {
@@ -104,7 +108,14 @@ impl fmt::Display for RendererCommand
                 next_track,
             } =>
             {
-                let state = playing_state.map_or("-".to_string(), |s| s.to_string());
+                let state = match playing_state
+                {
+                    None => "-",
+                    Some(PLAYING_STATE_STOPPED) => "⏹",
+                    Some(PLAYING_STATE_PLAYING) => "▶",
+                    Some(PLAYING_STATE_PAUSED) => "⏸",
+                    Some(i) => &i.to_string(),
+                };
                 let pos = current_position_ms.map_or("-".to_string(), |p| format!("{}ms", p));
                 let track = current_track
                     .as_ref()
@@ -115,7 +126,7 @@ impl fmt::Display for RendererCommand
 
                 write!(
                     f,
-                    "▶ SET_STATE │ State: {:<2} │ Pos: {:<8} │ Current: {} | Next {}",
+                    "SET_STATE │ State: {} │ Pos: {:<8} │ Current: {} | Next {}",
                     state, pos, track, next
                 )
             }
